@@ -1,0 +1,444 @@
+// Top-level entry — progressive module loading.
+// UID mode: fake loading animation → dashboard with per-module progressive rendering.
+// File mode: fake loading animation → /api/analyze-file one-shot → dashboard.
+
+const { useState, useRef, useEffect } = React;
+const { HomeView, LoadingView, DashboardView } = window.AppComponents;
+const { normalizeAnalysisResult, buildEmptyAgentOutput, normalizeApplicationTime } = window.AppUtils.normalize;
+const { analyzeByFile, analyzeModule, fetchUiConfig, fetchTrace } = window.AppServices.api;
+
+const UID_PATTERN = /^\d{18}$/;
+
+const DEFAULT_UID_TRANSITION_DURATION_MS = 4000;
+
+const LOADING_TEXTS = [
+  '正在唤醒多智能体系统...',
+  'App画像Agent：正在提取安装列表与分类标签...',
+  '行为画像Agent：正在分析埋点行为与活跃度...',
+  '征信画像Agent：正在解析征信报告与风险结果...',
+  '综合画像Agent：正在进行三维整合推理...'
+];
+
+const CORE_MODULES = ['app', 'behavior', 'credit'];
+const MODULE_RESULT_MAP = {
+  app: 'app_profile',
+  behavior: 'behavior_profile',
+  credit: 'credit_profile',
+  comprehensive: 'comprehensive_profile',
+  product: 'product_advice',
+  ops: 'ops_advice'
+};
+
+const VALID_DASHBOARD_TABS = ['comprehensive', 'app', 'behavior', 'credit', 'product', 'ops', 'trace', 'chat'];
+
+function getInitialDashboardTab() {
+  const params = new URLSearchParams(window.location.search);
+  const tab = params.get('tab');
+  if (VALID_DASHBOARD_TABS.includes(tab)) return tab;
+  if (params.get('session')) return 'chat';
+  return 'comprehensive';
+}
+
+function getInitialViewFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const tab = params.get('tab');
+  if (tab === 'chat' || params.get('session')) return 'dashboard';
+  return 'home';
+}
+
+function createInitialModuleStates(status) {
+  status = status || 'idle';
+  return {
+    app: { status: status, error: '' },
+    behavior: { status: status, error: '' },
+    credit: { status: status, error: '' },
+    comprehensive: { status: 'idle', error: '' },
+    product: { status: 'idle', error: '' },
+    ops: { status: 'idle', error: '' },
+    trace: { status: 'idle', error: '' }
+  };
+}
+
+function App() {
+  const [view, setView] = useState(getInitialViewFromUrl);
+  const [uid, setUid] = useState('');
+  const [uidError, setUidError] = useState('');
+  const [applicationTime, setApplicationTime] = useState('2026-04-15T12:00');
+  const [activeTab, setActiveTab] = useState(getInitialDashboardTab);
+  const [analysisResults, setAnalysisResults] = useState([]);
+  const [selectedResultIndex, setSelectedResultIndex] = useState(0);
+  const [errorMessage, setErrorMessage] = useState('');
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [moduleStates, setModuleStates] = useState(createInitialModuleStates());
+  // 2026-05-04 方案 A v2：按 UID 隔离的模块状态。NL Chat 多 UID 跑批不再互相覆盖。
+  // DashboardView 根据 selectedResult.uid 优先读这里，找不到再回退到全局 moduleStates。
+  const [moduleStatesByUid, setModuleStatesByUid] = useState({});
+  const [uidTransitionDurationMs, setUidTransitionDurationMs] = useState(DEFAULT_UID_TRANSITION_DURATION_MS);
+  // 2026-05-04 方案 A：NL Chat 跑过的 trace 结果种子，注入 DashboardView 的 traceCacheByUid，
+  // 避免用户跳到 trace tab 时再发一次 /api/trace 请求（trace 同样会跑 LLM）。
+  const [traceSeedByUid, setTraceSeedByUid] = useState({});
+
+  const [country, setCountry] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const v = params.get('country');
+    return v === 'th' ? 'th' : 'mx';
+  });
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('country', country);
+    window.history.replaceState({}, '', url.toString());
+  }, [country]);
+
+  function resetAnalysisStateForCountry() {
+    setAnalysisResults([]);
+    setSelectedResultIndex(0);
+    setModuleStates(createInitialModuleStates());
+    setModuleStatesByUid({});
+    setErrorMessage('');
+    setTraceSeedByUid({});
+  }
+
+  function handleCountryChange(next) {
+    if (next === country) return;
+    if (!window.confirm('切换国家会清空当前分析结果，是否继续？')) return;
+    resetAnalysisStateForCountry();
+    setCountry(next);
+  }
+
+  // Fetch backend-configurable transition duration once on mount.
+  useEffect(() => {
+    let isMounted = true;
+    fetchUiConfig()
+      .then((config) => {
+        const d = Number(config && config.uid_transition_duration_ms);
+        if (isMounted && Number.isFinite(d) && d >= 0) {
+          setUidTransitionDurationMs(d);
+        }
+      })
+      .catch(() => {});
+    return () => { isMounted = false; };
+  }, []);
+
+  useEffect(() => {
+    if (view !== 'dashboard') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('tab') !== activeTab) {
+      params.set('tab', activeTab);
+      const nextUrl = `${window.location.pathname}?${params.toString()}${window.location.hash}`;
+      window.history.replaceState({}, '', nextUrl);
+    }
+  }, [view, activeTab]);
+
+  function playLoadingSequence() {
+    return new Promise((resolve) => {
+      const durationMs = Math.max(0, Number(uidTransitionDurationMs) || 0);
+      resolve();  // resolve immediately — caller awaits this then switches to dashboard
+      // The LoadingView component handles its own text cycling internally
+    });
+  }
+
+  function _updateModuleResult(targetUid, moduleName, moduleResult) {
+    const resultKey = MODULE_RESULT_MAP[moduleName];
+    if (!resultKey) return;
+    setAnalysisResults((prev) => {
+      // 2026-05-04 方案 A：支持 chat 路径多 UID 写入。先按 uid 查找已存在条目，
+      // 找不到再追加新条目（保留旧 UID 模式：prev 为空时创建第 0 条）。
+      const next = prev.length ? [...prev] : [];
+      let idx = next.findIndex((r) => r && r.uid === targetUid);
+      if (idx < 0) {
+        next.push(normalizeAnalysisResult({ uid: targetUid }, targetUid));
+        idx = next.length - 1;
+      }
+      const current = next[idx];
+      const normalized = moduleResult || {};
+      next[idx] = {
+        ...current,
+        uid: targetUid,
+        [resultKey]: {
+          summary: (normalized.summary != null ? normalized.summary : '') || '',
+          structured_result: (normalized.structured_result && typeof normalized.structured_result === 'object') ? normalized.structured_result : {},
+          charts: Array.isArray(normalized.charts) ? normalized.charts : [],
+          report_markdown: (normalized.report_markdown != null ? normalized.report_markdown : '') || ''
+        }
+      };
+      return next;
+    });
+  }
+
+  // 2026-05-04 方案 A v2：NL Chat 跑完 run_profile 后回写 analysisResults +
+  // moduleStatesByUid（按 UID 隔离，多 UID 跑批不会互相覆盖）。
+  function ingestProfileFromChat({ uid: targetUid, module, payload }) {
+    if (!targetUid || !module || !payload) return;
+    const isOk = payload.status === 'ok' && payload.data;
+    if (isOk) {
+      _updateModuleResult(targetUid, module, payload.data);
+    }
+    const errMsg = isOk ? '' : ((payload.error && payload.error.message) || '该模块分析失败');
+    setModuleStatesByUid((prev) => {
+      const cur = prev[targetUid] || createInitialModuleStates();
+      return {
+        ...prev,
+        [targetUid]: {
+          ...cur,
+          [module]: { status: isOk ? 'success' : 'error', error: errMsg }
+        }
+      };
+    });
+  }
+
+  // 2026-05-04 方案 A v3：tool_started(run_profile) 时，前端预派发 (uids × modules) loading 状态，
+  // 让 6 个 Tab 卡片在长时间 LLM 跑批期间立即显示"分析中..."动画，避免 UI 看起来卡死。
+  function ingestProfilesPending({ uids, modules }) {
+    if (!Array.isArray(uids) || !Array.isArray(modules)) return;
+    if (uids.length === 0 || modules.length === 0) return;
+    // 1) 给每个 uid 在 analysisResults 里建壳（如果不存在），让 dashboard 顶部 UID 切换器立刻列出来
+    setAnalysisResults((prev) => {
+      let next = prev;
+      let mutated = false;
+      uids.forEach((u) => {
+        if (!next.find((r) => r && r.uid === u)) {
+          if (!mutated) { next = [...prev]; mutated = true; }
+          next.push(normalizeAnalysisResult({ uid: u }, u));
+        }
+      });
+      return mutated ? next : prev;
+    });
+    // 2) 把 (uid × module) 全置 loading，dashboard Tab 卡片立即出现"分析中..."
+    setModuleStatesByUid((prev) => {
+      const next = { ...prev };
+      uids.forEach((u) => {
+        const cur = next[u] || createInitialModuleStates();
+        const merged = { ...cur };
+        modules.forEach((m) => {
+          if (!merged[m] || merged[m].status !== 'success') {
+            merged[m] = { status: 'loading', error: '' };
+          }
+        });
+        next[u] = merged;
+      });
+      return next;
+    });
+  }
+
+  // 2026-05-04 方案 A：NL Chat 跑过的 trace 结果，缓存到 traceSeedByUid，
+  // DashboardView 接管时优先读种子，避免重复 fetch 重复 LLM。
+  function ingestTraceFromChat({ uid: targetUid, payload }) {
+    if (!targetUid || !payload) return;
+    setTraceSeedByUid((prev) => ({
+      ...prev,
+      [targetUid]: { requestStatus: 'success', response: payload }
+    }));
+    // trace uid 之前未出现在 analysisResults 时，也建一个壳条目（让 dashboard 切换面板可用）
+    setAnalysisResults((prev) => {
+      const idx = prev.findIndex((r) => r && r.uid === targetUid);
+      if (idx >= 0) return prev;
+      return prev.concat([normalizeAnalysisResult({ uid: targetUid }, targetUid)]);
+    });
+  }
+
+  async function loadModuleForUid(targetUid, moduleName, normalizedApplicationTime) {
+    setModuleStates((prev) => ({
+      ...prev,
+      [moduleName]: { status: 'loading', error: '' }
+    }));
+    try {
+      if (moduleName === 'trace') {
+        const traceResult = await fetchTrace(targetUid);
+        setAnalysisResults((prev) => {
+          const next = prev.length ? [...prev] : [normalizeAnalysisResult({uid: targetUid}, targetUid)];
+          next[0] = { ...next[0], _trace: traceResult };
+          return next;
+        });
+        setModuleStates((prev) => ({ ...prev, trace: { status: 'success', error: '' } }));
+        return true;
+      }
+      const payload = await analyzeModule(targetUid, moduleName, normalizedApplicationTime, country);
+      if ((payload && payload.status) !== 'ok' || !(payload && payload.data)) {
+        const backendError = (payload && payload.error && typeof payload.error === 'object') ? payload.error : {};
+        throw new Error(backendError.message || '该模块分析失败，请稍后重试。');
+      }
+      _updateModuleResult(targetUid, moduleName, payload.data);
+      setModuleStates((prev) => ({
+        ...prev,
+        [moduleName]: { status: 'success', error: '' }
+      }));
+      return true;
+    } catch (error) {
+      setModuleStates((prev) => ({
+        ...prev,
+        [moduleName]: { status: 'error', error: error.message || '该模块分析失败，请稍后重试。' }
+      }));
+      return false;
+    }
+  }
+
+  function preloadModulesForUid(targetUid, normalizedApplicationTime) {
+    // Fire core modules in parallel
+    Promise.all(
+      CORE_MODULES.map((m) => loadModuleForUid(targetUid, m, normalizedApplicationTime))
+    ).then((coreStatuses) => {
+      if (coreStatuses.every(Boolean)) {
+        // All 3 core modules succeeded → request comprehensive
+        loadModuleForUid(targetUid, 'comprehensive', normalizedApplicationTime).then((compOk) => {
+          if (compOk) {
+            // comprehensive succeeded → request product + ops in parallel
+            loadModuleForUid(targetUid, 'product', normalizedApplicationTime);
+            loadModuleForUid(targetUid, 'ops', normalizedApplicationTime);
+          } else {
+            // comprehensive failed → product/ops cannot run
+            setModuleStates((prev) => ({
+              ...prev,
+              product: { status: 'error', error: '产品策略依赖综合画像，综合画像分析失败。' },
+              ops: { status: 'error', error: '运营策略依赖综合画像，综合画像分析失败。' }
+            }));
+          }
+        });
+        return;
+      }
+      // At least one core module failed — comprehensive cannot run
+      setModuleStates((prev) => ({
+        ...prev,
+        comprehensive: { status: 'error', error: '综合画像依赖 App / Behavior / Credit，需等待三个基础模块全部成功。' },
+        product: { status: 'error', error: '产品策略依赖综合画像，综合画像未完成。' },
+        ops: { status: 'error', error: '运营策略依赖综合画像，综合画像未完成。' }
+      }));
+    });
+  }
+
+  function retryModule(moduleName) {
+    const selectedResult = analysisResults[selectedResultIndex] || {};
+    const targetUid = (selectedResult.uid || uid.trim() || '');
+    const normalizedApplicationTime = normalizeApplicationTime(applicationTime);
+    if (!targetUid || !moduleName) return;
+    if (moduleName === 'comprehensive') {
+      const coreReady = CORE_MODULES.every((name) => (moduleStates[name] && moduleStates[name].status) === 'success');
+      if (!coreReady) {
+        setModuleStates((prev) => ({
+          ...prev,
+          comprehensive: { status: 'error', error: '综合画像依赖 App / Behavior / Credit，需等待三个基础模块全部成功。' }
+        }));
+        return;
+      }
+    }
+    loadModuleForUid(targetUid, moduleName, normalizedApplicationTime);
+  }
+
+  async function handleAnalyze({ mode }) {
+    const trimmedUid = uid.trim();
+    const normalizedApplicationTime = normalizeApplicationTime(applicationTime);
+
+    if (mode === 'uid' && !trimmedUid) {
+      setUidError('请输入 18 位纯数字 UID。');
+      return;
+    }
+    if (mode === 'uid' && !UID_PATTERN.test(trimmedUid)) {
+      setUidError('UID 格式错误：仅支持 18 位纯数字。');
+      return;
+    }
+    if (mode === 'uid' && !normalizedApplicationTime) {
+      window.alert('请输入申请时间');
+      return;
+    }
+    if (mode === 'file' && !selectedFile) {
+      window.alert('请先选择 txt 或 csv 文件');
+      return;
+    }
+
+    setErrorMessage('');
+    setUidError('');
+    setView('loading');
+
+    try {
+      if (mode === 'uid') {
+        // Initialize empty result + module states
+        setAnalysisResults([normalizeAnalysisResult({ uid: trimmedUid }, trimmedUid)]);
+        setSelectedResultIndex(0);
+        setActiveTab('comprehensive');
+        setModuleStates(createInitialModuleStates('loading'));
+
+        // Start loading modules in background (non-blocking)
+        preloadModulesForUid(trimmedUid, normalizedApplicationTime);
+
+        // Wait for transition animation, then switch to dashboard
+        await new Promise((resolve) => {
+          window.setTimeout(resolve, Math.max(0, Number(uidTransitionDurationMs) || 0));
+        });
+        setView('dashboard');
+        return;
+      }
+
+      // File mode — one-shot with loading animation
+      const dataPromise = analyzeByFile(selectedFile, country);
+      const [payload] = await Promise.all([
+        dataPromise,
+        new Promise((resolve) => {
+          window.setTimeout(resolve, Math.max(0, Number(uidTransitionDurationMs) || 0));
+        })
+      ]);
+      const rawResults = Array.isArray(payload && payload.results) ? payload.results : [];
+      if (!rawResults.length) {
+        throw new Error('后端未返回有效画像结果。');
+      }
+      const normalizedResults = rawResults.map((item, index) =>
+        normalizeAnalysisResult(item, (item && item.uid) || trimmedUid || `user_${index + 1}`)
+      );
+      setAnalysisResults(normalizedResults);
+      setModuleStates(createInitialModuleStates('success'));
+      setSelectedResultIndex(0);
+      setActiveTab('comprehensive');
+      setView('dashboard');
+    } catch (error) {
+      setErrorMessage(error.message || '请求失败，请检查服务是否已启动。');
+      setView('home');
+    }
+  }
+
+  if (view === 'home') {
+    return (
+      <HomeView
+        uid={uid}
+        setUid={setUid}
+        uidError={uidError}
+        setUidError={setUidError}
+        applicationTime={applicationTime}
+        setApplicationTime={setApplicationTime}
+        selectedFile={selectedFile}
+        setSelectedFile={setSelectedFile}
+        onStartUid={() => handleAnalyze({ mode: 'uid' })}
+        onStartFile={() => handleAnalyze({ mode: 'file' })}
+        onStartChat={() => { setActiveTab('chat'); setView('dashboard'); }}
+        errorMessage={errorMessage}
+        country={country}
+        onCountryChange={handleCountryChange}
+      />
+    );
+  }
+
+  if (view === 'loading') {
+    return <LoadingView loadingTexts={LOADING_TEXTS} durationMs={uidTransitionDurationMs} />;
+  }
+
+  return (
+    <DashboardView
+      activeTab={activeTab}
+      setActiveTab={setActiveTab}
+      analysisResults={analysisResults}
+      selectedResultIndex={selectedResultIndex}
+      setSelectedResultIndex={setSelectedResultIndex}
+      moduleStates={moduleStates}
+      onRetryModule={retryModule}
+      onBack={() => setView('home')}
+      onChatProfileReady={ingestProfileFromChat}
+      onChatProfilesPending={ingestProfilesPending}
+      onChatTraceReady={ingestTraceFromChat}
+      traceSeedByUid={traceSeedByUid}
+      moduleStatesByUid={moduleStatesByUid}
+      country={country}
+      onCountryChange={handleCountryChange}
+    />
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
