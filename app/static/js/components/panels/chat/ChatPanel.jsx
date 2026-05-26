@@ -114,6 +114,15 @@ function ChatPanel({ onProfileReady, onProfilesPending, onTraceReady, onJumpToTa
         const progressKey = `${t.tool_call_id}:${p.uid || ''}:${p.module || ''}:${idx}`;
         if (dispatchedProgressRef.current.has(progressKey)) return;
         dispatchedProgressRef.current.add(progressKey);
+        if (window.console && typeof window.console.info === 'function') {
+          window.console.info('[tool_progress]', {
+            tool_call_id: t.tool_call_id,
+            uid: p.uid,
+            module: p.module,
+            completed: p.completed,
+            total: p.total,
+          });
+        }
         dispatchProfileRow(
           { uid: p.uid, module: p.module, result: p.result },
           `${t.tool_call_id}:${p.uid}:${p.module}`,

@@ -285,6 +285,14 @@ function DashboardView({
                     <h3 className="text-xl font-bold text-white mb-1">{tab.title}</h3>
                     <p className="text-xs text-white/80 uppercase tracking-wider">{tab.sub}</p>
                     <p className="mt-3 text-xs font-semibold text-white/90">{statusLabel}</p>
+                    {tabStatus === 'loading' ? (
+                      <div className="skeleton-shimmer mt-4 space-y-2" aria-label="module loading skeleton">
+                        <div className="h-1.5 w-28 overflow-hidden rounded-full bg-white/25">
+                          <div className="loading-progress-bar h-full w-2/3 animate-pulse rounded-full bg-white/80"></div>
+                        </div>
+                        <div className="h-1.5 w-20 rounded-full bg-white/20"></div>
+                      </div>
+                    ) : null}
                   </div>
                   {Icon ? <Icon className={`w-8 h-8 text-white ${isActive ? 'animate-pulse' : 'opacity-70'}`} /> : null}
                 </div>

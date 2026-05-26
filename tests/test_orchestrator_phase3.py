@@ -95,9 +95,10 @@ def test_agent_loop_mock_run_trace_completes(monkeypatch):
     assert "final" in types
 
 
-def test_agent_loop_run_profile_emits_module_progress(monkeypatch):
+def test_agent_loop_run_profile_emits_module_progress(monkeypatch, caplog):
     """run_profile should stream module-level progress before final completion."""
     import asyncio
+    import logging
 
     from app.services.orchestrator_agent.agent_loop import run_agent_loop
     from app.services.orchestrator_agent.session_store import create_session
@@ -166,7 +167,8 @@ def test_agent_loop_run_profile_emits_module_progress(monkeypatch):
     async def _drive():
         return [evt async for evt in run_agent_loop(session=sess, prompt="帮我分析一下824812551379353600这个用户")]
 
-    events = asyncio.run(_drive())
+    with caplog.at_level(logging.INFO, logger="app.services.orchestrator_agent.agent_loop"):
+        events = asyncio.run(_drive())
     types = [e.get("type") for e in events]
 
     assert types.index("tool_started") < types.index("tool_progress") < types.index("tool_completed")
@@ -174,6 +176,15 @@ def test_agent_loop_run_profile_emits_module_progress(monkeypatch):
     assert [e["module"] for e in progress_events] == ["app", "behavior"]
     assert progress_events[-1]["completed"] == 2
     assert events[-1]["type"] == "final"
+    progress_logs = [
+        record for record in caplog.records
+        if record.name == "app.services.orchestrator_agent.agent_loop"
+        and getattr(record, "event", "") == "run_profile_module_completed"
+    ]
+    assert [getattr(record, "profile_module", None) for record in progress_logs] == ["app", "behavior"]
+    assert progress_logs[-1].uid == "824812551379353600"
+    assert progress_logs[-1].completed == 2
+    assert progress_logs[-1].total == 2
 
 
 # ---- FastAPI routes ----

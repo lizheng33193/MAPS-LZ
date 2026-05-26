@@ -8,6 +8,8 @@ APP = REPO / "app" / "static" / "js" / "app.jsx"
 CHAT_PANEL = REPO / "app" / "static" / "js" / "components" / "panels" / "chat" / "ChatPanel.jsx"
 API = REPO / "app" / "static" / "js" / "services" / "api.js"
 MEMORY_INSPECTOR = REPO / "app" / "static" / "js" / "components" / "panels" / "chat" / "MemoryInspector.jsx"
+DASHBOARD = REPO / "app" / "static" / "js" / "components" / "DashboardView.jsx"
+MODULE_STATUS = REPO / "app" / "static" / "js" / "components" / "common" / "ModuleStatusPanel.jsx"
 
 
 def test_app_owns_tab_url_routing() -> None:
@@ -82,3 +84,24 @@ def test_memory_inspector_separates_session_history_and_long_term_memory() -> No
     assert "不参与长期记忆召回" in inspector_src
     assert "移入已删除" in inspector_src
     assert "active 会被召回" in inspector_src
+
+
+def test_memory_inspector_explains_session_filters_and_recall_reason() -> None:
+    inspector_src = MEMORY_INSPECTOR.read_text(encoding="utf-8")
+
+    assert "搜索会话" in inspector_src
+    assert "会话状态" in inspector_src
+    assert "会话国家" in inspector_src
+    assert "为什么会被召回" in inspector_src
+    assert "会被召回：active + 当前 identity + 查询相关" in inspector_src
+    assert "不参与召回" in inspector_src
+
+
+def test_dashboard_loading_states_use_skeleton_progress() -> None:
+    dashboard_src = DASHBOARD.read_text(encoding="utf-8")
+    module_status_src = MODULE_STATUS.read_text(encoding="utf-8")
+
+    assert "skeleton-shimmer" in dashboard_src
+    assert "loading-progress-bar" in dashboard_src
+    assert "模块分析骨架屏" in module_status_src
+    assert "skeleton-shimmer" in module_status_src

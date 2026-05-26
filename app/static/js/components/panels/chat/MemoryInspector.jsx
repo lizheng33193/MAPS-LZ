@@ -34,6 +34,10 @@ function MemoryInspector() {
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState(null);
   const [sessions, setSessions] = useState([]);
+  const [sessionQuery, setSessionQuery] = useState('');
+  const [sessionStatusFilter, setSessionStatusFilter] = useState('all');
+  const [sessionCountryFilter, setSessionCountryFilter] = useState('mx');
+  const [sessionLimit, setSessionLimit] = useState(20);
   const [results, setResults] = useState([]);
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('');
@@ -61,11 +65,13 @@ function MemoryInspector() {
 
   const loadSessions = useCallback(async () => {
     const payload = await fetchOrchestratorSessions({
-      ...identity,
-      limit: Number(topK) || 8,
+      user_id: identity.user_id,
+      project_id: identity.project_id,
+      country: sessionCountryFilter || undefined,
+      limit: Number(sessionLimit) || 20,
     });
     setSessions(Array.isArray(payload.sessions) ? payload.sessions : []);
-  }, [identity, topK]);
+  }, [identity, sessionCountryFilter, sessionLimit]);
 
   const loadList = useCallback(async (overrides = {}) => {
     const nextQuery = Object.prototype.hasOwnProperty.call(overrides, 'query') ? overrides.query : query;
@@ -186,6 +192,21 @@ function MemoryInspector() {
   const activeTotal = status && status.by_status && typeof status.by_status.active === 'number'
     ? status.by_status.active
     : 0;
+  const filteredSessions = useMemo(() => {
+    const q = sessionQuery.trim().toLowerCase();
+    return sessions.filter((item) => {
+      if (sessionStatusFilter !== 'all' && item.status !== sessionStatusFilter) return false;
+      if (q) {
+        const haystack = [
+          item.session_id,
+          item.last_user_message_preview,
+          item.final_message_preview,
+        ].map((v) => String(v || '').toLowerCase()).join(' ');
+        if (!haystack.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [sessionQuery, sessionStatusFilter, sessions]);
 
   return (
     <section className="rounded-lg border border-slate-200 bg-white">
@@ -209,7 +230,7 @@ function MemoryInspector() {
               <div className="flex items-center gap-2">
                 {History ? <History className="h-4 w-4 text-slate-500" /> : null}
                 <h3 className="text-sm font-semibold text-slate-800">短期会话历史</h3>
-                <Badge>{sessions.length}</Badge>
+                <Badge>{filteredSessions.length}/{sessions.length}</Badge>
               </div>
               <button type="button" onClick={() => loadSessions()} disabled={loading} className="text-xs font-semibold text-slate-600 hover:text-slate-900">
                 刷新
@@ -218,10 +239,34 @@ function MemoryInspector() {
             <p className="mt-1 text-xs leading-5 text-slate-500">
               短期会话历史来自 outputs/orchestrator_sessions，只用于恢复聊天上下文，不参与长期记忆召回。
             </p>
+            <div className="mt-3 grid gap-2 md:grid-cols-[1fr_0.36fr_0.32fr_0.28fr]">
+              <label className="block">
+                <span className="mb-1 block text-xs font-semibold text-slate-500">搜索会话</span>
+                <input
+                  value={sessionQuery}
+                  onChange={(e) => setSessionQuery(e.target.value)}
+                  className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400"
+                  placeholder="session id / 最近问题 / 最终回复"
+                />
+              </label>
+              <SelectField label="会话状态" value={sessionStatusFilter} onChange={setSessionStatusFilter} options={['all', 'completed', 'error', 'budget_exceeded']} />
+              <SelectField label="会话国家" value={sessionCountryFilter} onChange={setSessionCountryFilter} options={['', 'mx', 'th']} emptyLabel="全部国家" />
+              <label className="block">
+                <span className="mb-1 block text-xs font-semibold text-slate-500">会话 Limit</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="50"
+                  value={sessionLimit}
+                  onChange={(e) => setSessionLimit(e.target.value)}
+                  className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400"
+                />
+              </label>
+            </div>
             <div className="mt-3 space-y-2">
-              {sessions.length === 0 ? (
+              {filteredSessions.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-slate-200 bg-white px-3 py-3 text-xs text-slate-500">暂无可恢复会话。</div>
-              ) : sessions.map((item) => (
+              ) : filteredSessions.map((item) => (
                 <button
                   key={item.session_id}
                   type="button"
@@ -248,6 +293,10 @@ function MemoryInspector() {
             <p className="mt-1 text-xs leading-5 text-slate-500">
               active 会被召回；archived 不参与召回但可恢复；deleted 是软删除，不参与召回但仍可列表查看和恢复。删除操作会“移入已删除”，不会永久清空。
             </p>
+            <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-800">
+              <span className="font-semibold">为什么会被召回：</span>
+              当前 identity 下的 active 记忆，若与本轮问题、Query、Category、Country 或 tags 命中，就可能进入 Agent 上下文；archived / deleted 不参与召回，但可查看和恢复。
+            </div>
           </div>
 
           <div className="grid gap-3 md:grid-cols-[1.2fr_0.75fr_0.55fr_0.45fr]">
@@ -348,7 +397,10 @@ function MemoryInspector() {
                 {editingId === item.memory_id ? (
                   <EditForm draft={editDraft} setDraft={setEditDraft} onSave={() => saveEdit(item.memory_id)} onCancel={() => setEditingId('')} loading={loading} />
                 ) : (
-                  <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-800">{item.content}</p>
+                  <>
+                    <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-800">{item.content}</p>
+                    <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">{_recallExplanation(item)}</p>
+                  </>
                 )}
               </article>
             ))}
@@ -419,6 +471,20 @@ function _statusLabel(status) {
     deleted: 'deleted 已删除不召回',
     superseded: 'superseded 已替换',
   }[status] || status;
+}
+
+function _recallExplanation(item) {
+  const status = item && item.status;
+  if (status === 'active') {
+    return '会被召回：active + 当前 identity + 查询相关。若本轮问题、Query、Category、Country 或 tags 命中，这条长期记忆可能进入 Agent 上下文。';
+  }
+  if (status === 'archived') {
+    return '不参与召回：archived 已归档，仍可查看并恢复为 active。';
+  }
+  if (status === 'deleted') {
+    return '不参与召回：deleted 已删除不召回，但这是软删除，仍可查看并恢复。';
+  }
+  return '不参与召回：仅 active 长期记忆会进入后续 Agent 上下文。';
 }
 
 function _emptyDraft() {
