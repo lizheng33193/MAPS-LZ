@@ -2,6 +2,7 @@ const {
   archiveMemory,
   createMemory,
   deleteMemory,
+  fetchOrchestratorSessions,
   fetchMemoryStatus,
   listMemories,
   queryMemory,
@@ -15,6 +16,7 @@ const {
   ChevronUp,
   Database,
   Edit3,
+  History,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -31,6 +33,7 @@ const STATUS_OPTIONS = ['active', 'archived', 'deleted', 'all'];
 function MemoryInspector() {
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState(null);
+  const [sessions, setSessions] = useState([]);
   const [results, setResults] = useState([]);
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('');
@@ -55,6 +58,14 @@ function MemoryInspector() {
     const body = await fetchMemoryStatus();
     setStatus(body);
   }, []);
+
+  const loadSessions = useCallback(async () => {
+    const payload = await fetchOrchestratorSessions({
+      ...identity,
+      limit: Number(topK) || 8,
+    });
+    setSessions(Array.isArray(payload.sessions) ? payload.sessions : []);
+  }, [identity, topK]);
 
   const loadList = useCallback(async (overrides = {}) => {
     const nextQuery = Object.prototype.hasOwnProperty.call(overrides, 'query') ? overrides.query : query;
@@ -88,8 +99,17 @@ function MemoryInspector() {
   useEffect(() => {
     if (!open) return;
     loadStatus().catch((err) => setError(String((err && err.message) || err)));
+    loadSessions().catch((err) => setError(String((err && err.message) || err)));
     loadList();
   }, [open]);
+
+  const openSession = useCallback((sessionId) => {
+    if (!sessionId) return;
+    const params = new URLSearchParams(window.location.search);
+    params.set('session', sessionId);
+    params.set('tab', 'chat');
+    window.location.assign(`${window.location.pathname}?${params.toString()}${window.location.hash}`);
+  }, []);
 
   const create = useCallback(async () => {
     if (!draft.content.trim()) return;
@@ -161,9 +181,11 @@ function MemoryInspector() {
   }, [identity, loadList]);
 
   const ToggleIcon = open ? ChevronUp : ChevronDown;
-  const total = status && typeof status.total === 'number' ? status.total : 0;
   const byCategory = status && status.by_category ? Object.entries(status.by_category) : [];
   const byStatus = status && status.by_status ? Object.entries(status.by_status) : [];
+  const activeTotal = status && status.by_status && typeof status.by_status.active === 'number'
+    ? status.by_status.active
+    : 0;
 
   return (
     <section className="rounded-lg border border-slate-200 bg-white">
@@ -174,14 +196,60 @@ function MemoryInspector() {
       >
         <span className="flex min-w-0 items-center gap-2">
           {Database ? <Database className="h-4 w-4 shrink-0 text-slate-500" /> : null}
-          <span className="font-semibold text-slate-800">记忆</span>
-          <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">{total}</span>
+          <span className="font-semibold text-slate-800">记忆与历史</span>
+          <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">{activeTotal}</span>
         </span>
         {ToggleIcon ? <ToggleIcon className="h-4 w-4 shrink-0 text-slate-500" /> : null}
       </button>
 
       {open ? (
         <div className="border-t border-slate-200 px-4 py-4">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                {History ? <History className="h-4 w-4 text-slate-500" /> : null}
+                <h3 className="text-sm font-semibold text-slate-800">短期会话历史</h3>
+                <Badge>{sessions.length}</Badge>
+              </div>
+              <button type="button" onClick={() => loadSessions()} disabled={loading} className="text-xs font-semibold text-slate-600 hover:text-slate-900">
+                刷新
+              </button>
+            </div>
+            <p className="mt-1 text-xs leading-5 text-slate-500">
+              短期会话历史来自 outputs/orchestrator_sessions，只用于恢复聊天上下文，不参与长期记忆召回。
+            </p>
+            <div className="mt-3 space-y-2">
+              {sessions.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-slate-200 bg-white px-3 py-3 text-xs text-slate-500">暂无可恢复会话。</div>
+              ) : sessions.map((item) => (
+                <button
+                  key={item.session_id}
+                  type="button"
+                  onClick={() => openSession(item.session_id)}
+                  className="block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-left hover:bg-slate-50"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <span className="font-mono font-semibold text-slate-700">{item.session_id}</span>
+                    <span className="text-slate-400">{item.updated_at}</span>
+                  </div>
+                  <div className="mt-1 truncate text-xs text-slate-600">{item.last_user_message_preview || '暂无用户消息'}</div>
+                  {item.final_message_preview ? <div className="mt-1 truncate text-xs text-slate-400">{item.final_message_preview}</div> : null}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-xl border border-slate-200 p-3">
+            <div className="flex items-center gap-2">
+              {Database ? <Database className="h-4 w-4 text-slate-500" /> : null}
+              <h3 className="text-sm font-semibold text-slate-800">长期记忆</h3>
+              <Badge tone="blue">active: {activeTotal}</Badge>
+            </div>
+            <p className="mt-1 text-xs leading-5 text-slate-500">
+              active 会被召回；archived 不参与召回但可恢复；deleted 是软删除，不参与召回但仍可列表查看和恢复。删除操作会“移入已删除”，不会永久清空。
+            </p>
+          </div>
+
           <div className="grid gap-3 md:grid-cols-[1.2fr_0.75fr_0.55fr_0.45fr]">
             <label className="block">
               <span className="mb-1 block text-xs font-semibold text-slate-500">Query</span>
@@ -226,7 +294,7 @@ function MemoryInspector() {
               列表
             </button>
             {byCategory.map(([key, value]) => <Badge key={key} tone="blue">{key}: {value}</Badge>)}
-            {byStatus.map(([key, value]) => <Badge key={key}>{key}: {value}</Badge>)}
+            {byStatus.map(([key, value]) => <Badge key={key}>{_statusLabel(key)}: {value}</Badge>)}
           </div>
 
           <div className="mt-4 rounded-lg border border-slate-200 p-3">
@@ -274,7 +342,7 @@ function MemoryInspector() {
                     <IconButton title="编辑" onClick={() => startEdit(item)} icon={Edit3} />
                     {item.status === 'active' ? <IconButton title="归档" onClick={() => setRowStatus(item, 'archive')} icon={Archive} /> : null}
                     {item.status !== 'active' && item.status !== 'deleted' ? <IconButton title="恢复" onClick={() => setRowStatus(item, 'restore')} icon={RotateCcw} /> : null}
-                    {item.status !== 'deleted' ? <IconButton title="删除" onClick={() => setRowStatus(item, 'delete')} icon={Trash2} /> : null}
+                    {item.status !== 'deleted' ? <IconButton title="移入已删除" onClick={() => setRowStatus(item, 'delete')} icon={Trash2} /> : null}
                   </div>
                 </div>
                 {editingId === item.memory_id ? (
@@ -342,6 +410,15 @@ function Badge({ children, tone }) {
     ? 'rounded bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700'
     : 'rounded bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600';
   return <span className={cls}>{children}</span>;
+}
+
+function _statusLabel(status) {
+  return {
+    active: 'active 会被召回',
+    archived: 'archived 不参与召回',
+    deleted: 'deleted 已删除不召回',
+    superseded: 'superseded 已替换',
+  }[status] || status;
 }
 
 function _emptyDraft() {

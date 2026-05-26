@@ -41,6 +41,7 @@
 - [x] 前端对话 Tab → [docs/plans/04-nl-chat-tab-frontend-plan.md](docs/plans/04-nl-chat-tab-frontend-plan.md)（[complete] 92771ee 2026-05-04 + hotfix 路由 2026-05-04，349 tests + HTTP smoke 全绿）
 - [x] Orchestrator Memory V1 → SQLite + FTS5 长期记忆、Memory 管理 API / Inspector、离线评估集与 runner（2026-05-25，baseline checkpoint `3c10d85`，contract: docs/specs/memory-behavior-contract.md）
 - [x] Memory recovery audit → 确认 Memory 管理/评估功能仍在，恢复本地 `.env/key.json/data` 运行文件，并记录不可恢复的本地 SQLite runtime state（2026-05-25，docs/reviews/memory-recovery-audit-2026-05-25.md）
+- [x] Orchestrator Chat progress + memory/session UI contract → 模块级 `tool_progress`、短期会话历史列表、长期记忆心智澄清（2026-05-26；docs/specs/orchestrator-chat-progress-memory-ui-contract.md；plan: docs/plans/orchestrator-chat-progress-memory-ui-plan.md）
 
 ## 已完成（最近）
 - [x] 前端渐进加载迁移（参考项目融合）→ docs/plans/frontend-progressive-loading-plan.md（2026-05-02）

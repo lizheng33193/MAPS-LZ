@@ -9,8 +9,11 @@ Phase 3 Task 3.4 在本文件追加 ACK 分支特殊处理，工具中 query_dat
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
+import queue
 import re
+import threading
 import uuid
 from datetime import datetime, timezone
 from typing import AsyncGenerator
@@ -294,7 +297,40 @@ async def run_agent_loop(
                         default_country=detected_country or session.country or "mx",
                     )
                 else:
-                    output_obj = await asyncio.to_thread(tool_fn, input_obj)
+                    if tool_name == "run_profile":
+                        progress_q: queue.Queue = queue.Queue()
+
+                        def _progress_cb(progress_evt: dict) -> None:
+                            progress_q.put(("progress", progress_evt, None))
+
+                        def _worker() -> None:
+                            try:
+                                progress_output = _call_tool_with_optional_progress(
+                                    tool_fn,
+                                    input_obj,
+                                    _progress_cb,
+                                )
+                                progress_q.put(("done", progress_output, None))
+                            except Exception as worker_exc:  # noqa: BLE001
+                                progress_q.put(("error", None, worker_exc))
+
+                        threading.Thread(target=_worker, daemon=True).start()
+                        while True:
+                            kind, payload, worker_exc = await asyncio.to_thread(progress_q.get)
+                            if kind == "progress":
+                                yield {
+                                    "type": "tool_progress",
+                                    "tool_call_id": tool_call_id,
+                                    "tool_name": tool_name,
+                                    **(payload or {}),
+                                }
+                                continue
+                            if kind == "error":
+                                raise worker_exc
+                            output_obj = payload
+                            break
+                    else:
+                        output_obj = await asyncio.to_thread(tool_fn, input_obj)
                 output = output_obj.model_dump(mode="json")
 
             record.output = output
@@ -387,3 +423,18 @@ def _append_summary_line(existing: str | None, prompt: str, final_message: str) 
     )
     combined = "\n".join(part for part in [existing, line] if part)
     return combined[-2500:]
+
+
+def _call_tool_with_optional_progress(tool_fn, input_obj, progress_callback):
+    """Call tools that may support a progress_callback without breaking old fakes."""
+    try:
+        params = inspect.signature(tool_fn).parameters.values()
+        supports_progress = any(
+            p.name == "progress_callback" or p.kind == inspect.Parameter.VAR_KEYWORD
+            for p in params
+        )
+    except (TypeError, ValueError):
+        supports_progress = False
+    if supports_progress:
+        return tool_fn(input_obj, progress_callback=progress_callback)
+    return tool_fn(input_obj)

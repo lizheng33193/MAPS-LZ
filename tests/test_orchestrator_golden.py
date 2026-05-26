@@ -23,8 +23,11 @@ def _build_mock_decisions(case: dict) -> list[dict]:
     每个工具一轮 tool_call decision，最后一轮 final decision。
     """
     decisions = []
+    case_tool_arguments = case.get("tool_arguments") or {}
     for tool in case["expected_tools"]:
-        if tool == "parse_uid_file":
+        if tool in case_tool_arguments:
+            args = case_tool_arguments[tool]
+        elif tool == "parse_uid_file":
             args = {"file_path": f"data/id_files/{case['country']}/sample.txt"}
         elif tool == "run_profile":
             args = {
@@ -73,7 +76,21 @@ def _mock_judge(case: dict, session_log: list) -> dict:
         e["tool_name"] for e in session_log
         if e.get("type") == "tool_started"
     ]
-    if actual_tools == case["expected_tools"]:
+    expected_args = case.get("expected_tool_arguments") or {}
+    argument_errors = []
+    for e in session_log:
+        if e.get("type") != "tool_started":
+            continue
+        tool_name = e.get("tool_name")
+        if tool_name not in expected_args:
+            continue
+        if not _contains_subset(e.get("input") or {}, expected_args[tool_name]):
+            argument_errors.append({
+                "tool": tool_name,
+                "actual": e.get("input") or {},
+                "expected_subset": expected_args[tool_name],
+            })
+    if actual_tools == case["expected_tools"] and not argument_errors:
         return {
             "scores": {
                 "tool_selection": 5,
@@ -85,12 +102,23 @@ def _mock_judge(case: dict, session_log: list) -> dict:
             "verdict": "pass",
             "rationale": "mock Judge: tool sequence matches exactly",
         }
+    rationale = f"actual={actual_tools} expected={case['expected_tools']}"
+    if argument_errors:
+        rationale += f" argument_errors={argument_errors}"
     return {
         "scores": {"tool_selection": 1, "tool_order": 1, "param_extract": 1, "no_hallucination": 1},
         "total": 4,
         "verdict": "fail",
-        "rationale": f"actual={actual_tools} expected={case['expected_tools']}",
+        "rationale": rationale,
     }
+
+
+def _contains_subset(actual, expected) -> bool:
+    if isinstance(expected, dict):
+        if not isinstance(actual, dict):
+            return False
+        return all(k in actual and _contains_subset(actual[k], v) for k, v in expected.items())
+    return actual == expected
 
 
 @pytest.mark.parametrize("case_path", sorted(GOLDEN_DIR.glob("case_*.json")))

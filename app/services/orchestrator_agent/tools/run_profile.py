@@ -6,6 +6,7 @@ modules 默认 ["app"]；遍历 (uid × module) 调 analyze_module。
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from app.services.orchestrator import AnalysisOrchestrator
@@ -14,16 +15,32 @@ from app.services.orchestrator_agent.schemas import (
 )
 
 
-def run_profile(input_data: RunProfileInput) -> RunProfileOutput:
+def run_profile(
+    input_data: RunProfileInput,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> RunProfileOutput:
     orch = AnalysisOrchestrator()
     modules = input_data.modules or ["app"]
     results: list[dict[str, Any]] = []
+    total = len(input_data.uids) * len(modules)
+    completed = 0
     for uid in input_data.uids:
         for mod in modules:
             r = orch.analyze_module(
                 uid=uid, module=mod, application_time=input_data.app_time,
             )
+            completed += 1
             results.append({"uid": uid, "module": mod, "result": r})
+            if progress_callback is not None:
+                progress_callback({
+                    "progress_type": "profile_module_completed",
+                    "uid": uid,
+                    "module": mod,
+                    "result": r,
+                    "status": "ok" if r.get("status") == "ok" else "error",
+                    "completed": completed,
+                    "total": total,
+                })
     return RunProfileOutput(
         results=results,
         cache_hits=0,

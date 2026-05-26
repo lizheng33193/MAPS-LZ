@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
 from app.services.orchestrator_agent.memory_policy import build_memory_record
 from app.services.orchestrator_agent.memory_store import SQLiteMemoryStore
+from app.services.orchestrator_agent.schemas import OrchestratorMessage
+from app.services.orchestrator_agent.session_store import create_session, save_session
 
 
 @pytest.mark.timeout(3)
@@ -155,3 +159,49 @@ def test_memory_management_api_identity_isolation_and_duplicate_update_conflict(
         json={**identity, "content": "你好", "category": "preference"},
     )
     assert rejected.status_code == 422
+
+
+@pytest.mark.timeout(3)
+def test_session_history_list_api_identity_sorting_preview_and_limit():
+    first = create_session(user_id="history-user", project_id="history-project", country="mx")
+    first.messages.append(OrchestratorMessage(
+        role="user",
+        content="第一条用户消息",
+        timestamp=datetime.now(timezone.utc),
+    ))
+    save_session(first)
+
+    second = create_session(user_id="history-user", project_id="history-project", country="mx")
+    second.messages.append(OrchestratorMessage(
+        role="user",
+        content="第二条用户消息，应该排在最前",
+        timestamp=datetime.now(timezone.utc),
+    ))
+    second.final_message = "第二条最终回复"
+    save_session(second)
+
+    other = create_session(user_id="other-user", project_id="history-project", country="mx")
+    other.messages.append(OrchestratorMessage(
+        role="user",
+        content="不应该被看到",
+        timestamp=datetime.now(timezone.utc),
+    ))
+    save_session(other)
+
+    client = TestClient(app)
+    resp = client.get(
+        "/api/orchestrator/sessions",
+        params={"limit": 1},
+        headers={"X-User-ID": "history-user", "X-Project-ID": "history-project", "X-Country": "mx"},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["limit"] == 1
+    assert len(body["sessions"]) == 1
+    item = body["sessions"][0]
+    assert item["session_id"] == second.session_id
+    assert item["message_count"] == 1
+    assert "第二条用户消息" in item["last_user_message_preview"]
+    assert item["final_message_preview"] == "第二条最终回复"
+    assert item["user_id"] == "history-user"

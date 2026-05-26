@@ -11,7 +11,7 @@ REPO = Path(__file__).resolve().parents[2]
 REDUCER = REPO / "app" / "static" / "js" / "components" / "panels" / "chat" / "chatReducer.js"
 
 REQUIRED = [
-    "user_input", "session_started", "tool_started", "tool_completed",
+    "user_input", "session_started", "tool_started", "tool_progress", "tool_completed",
     "assistant_thinking", "awaiting_user_ack", "budget_warning",
     "provider_fallback", "error", "final", "done",
 ]
@@ -33,6 +33,7 @@ def test_reducer_walks_full_session() -> None:
         {"type": "user_input", "content": "hello"},
         {"type": "session_started", "session_id": "s-1"},
         {"type": "tool_started", "tool_call_id": "tc-1", "tool_name": "run_trace", "input": {}},
+        {"type": "tool_progress", "tool_call_id": "tc-1", "tool_name": "run_profile", "progress_type": "profile_module_completed", "uid": "u1", "module": "app", "status": "ok", "completed": 1, "total": 2, "result": {"status": "ok"}},
         {"type": "assistant_thinking", "content_delta": "正在"},
         {"type": "assistant_thinking", "content_delta": "分析"},
         {"type": "tool_completed", "tool_call_id": "tc-1", "status": "ok", "output": {"ok": True}},
@@ -56,6 +57,8 @@ process.stdout.write(JSON.stringify(state));
     assert state["sessionId"] == "s-1"
     assert len(state["messages"]) >= 2
     assert state["toolCalls"][0]["status"] == "ok"
+    assert state["toolCalls"][0]["progress"][0]["module"] == "app"
+    assert state["toolCalls"][0]["progress"][0]["completed"] == 1
     assert state["pendingAck"] is None
     assert state["budget"]["percentage"] == 90
     assert state["providerFallback"]["from"] == "claude"

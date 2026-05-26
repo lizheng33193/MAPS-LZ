@@ -35,6 +35,23 @@ function chatReducer(state, evt) {
     case 'tool_started':
       // 2026-05-04 方案 A v3：记录 startedAtMs 让 ChatPanel 显示已用时间。
       return { ...state, toolCalls: state.toolCalls.concat([{ tool_call_id: evt.tool_call_id, tool_name: evt.tool_name, status: 'pending', input: evt.input, output: null, startedAtMs: Date.now() }]) };
+    case 'tool_progress': {
+      const progressEvt = {
+        progress_type: evt.progress_type,
+        uid: evt.uid,
+        module: evt.module,
+        result: evt.result,
+        status: evt.status,
+        completed: evt.completed,
+        total: evt.total,
+      };
+      const updated = state.toolCalls.map((t) => (
+        t.tool_call_id === evt.tool_call_id
+          ? { ...t, progress: (t.progress || []).concat([progressEvt]) }
+          : t
+      ));
+      return { ...state, toolCalls: updated };
+    }
     case 'tool_completed': {
       const updated = state.toolCalls.map((t) => t.tool_call_id === evt.tool_call_id ? { ...t, status: evt.status === 'ok' ? 'ok' : 'error', output: evt.output, finishedAtMs: Date.now() } : t);
       const pendingAck = state.pendingAck && state.pendingAck.tool_call_id === evt.tool_call_id ? null : state.pendingAck;

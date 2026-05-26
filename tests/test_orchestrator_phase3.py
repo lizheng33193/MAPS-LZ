@@ -95,6 +95,87 @@ def test_agent_loop_mock_run_trace_completes(monkeypatch):
     assert "final" in types
 
 
+def test_agent_loop_run_profile_emits_module_progress(monkeypatch):
+    """run_profile should stream module-level progress before final completion."""
+    import asyncio
+
+    from app.services.orchestrator_agent.agent_loop import run_agent_loop
+    from app.services.orchestrator_agent.session_store import create_session
+
+    decisions = iter([
+        {"status": "ok", "structured_result": {
+            "tool_call": {
+                "name": "run_profile",
+                "arguments": {
+                    "uids": ["824812551379353600"],
+                    "app_time": None,
+                    "modules": ["app", "behavior"],
+                },
+            },
+        }},
+        {"status": "ok", "structured_result": {
+            "final_message": "## 用户请求理解\n画像完成\n", "confidence": 0.8,
+        }},
+    ])
+
+    class _FakeClient:
+        last_token_usage = {"prompt": 100, "completion": 50, "total": 150}
+        def generate_structured(self, **kwargs):
+            return next(decisions)
+
+    def _fake_run_profile(inp, progress_callback=None):
+        results = []
+        for idx, mod in enumerate(inp.modules or ["app"], start=1):
+            result = {
+                "uid": inp.uids[0],
+                "module": mod,
+                "status": "ok",
+                "data": {"summary": f"{mod} done", "structured_result": {}, "charts": [], "report_markdown": ""},
+                "error": None,
+            }
+            if progress_callback:
+                progress_callback({
+                    "progress_type": "profile_module_completed",
+                    "uid": inp.uids[0],
+                    "module": mod,
+                    "result": result,
+                    "status": "ok",
+                    "completed": idx,
+                    "total": 2,
+                })
+            results.append({"uid": inp.uids[0], "module": mod, "result": result})
+        return type("X", (), {
+            "model_dump": lambda self, mode="json": {
+                "results": results,
+                "cache_hits": 0,
+                "cache_misses": 2,
+            },
+        })()
+
+    monkeypatch.setattr(
+        "app.services.orchestrator_agent.agent_loop.ModelClient",
+        lambda: _FakeClient(),
+    )
+    monkeypatch.setattr(
+        "app.services.orchestrator_agent.tools.run_profile",
+        _fake_run_profile,
+    )
+
+    sess = create_session()
+
+    async def _drive():
+        return [evt async for evt in run_agent_loop(session=sess, prompt="帮我分析一下824812551379353600这个用户")]
+
+    events = asyncio.run(_drive())
+    types = [e.get("type") for e in events]
+
+    assert types.index("tool_started") < types.index("tool_progress") < types.index("tool_completed")
+    progress_events = [e for e in events if e.get("type") == "tool_progress"]
+    assert [e["module"] for e in progress_events] == ["app", "behavior"]
+    assert progress_events[-1]["completed"] == 2
+    assert events[-1]["type"] == "final"
+
+
 # ---- FastAPI routes ----
 
 def test_orchestrator_chat_route_returns_sse(monkeypatch):

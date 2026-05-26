@@ -18,20 +18,38 @@ function ChatToolCallStream({ toolCalls, now }) {
           const finishedAt = t.finishedAtMs || tickNow;
           const elapsedSec = startedAt ? Math.max(0, Math.floor((finishedAt - startedAt) / 1000)) : null;
           const elapsedLabel = elapsedSec != null ? `${Math.floor(elapsedSec/60)}:${String(elapsedSec%60).padStart(2,'0')}` : null;
+          const progress = Array.isArray(t.progress) ? t.progress : [];
+          const latestProgress = progress.length ? progress[progress.length - 1] : null;
           return (
-            <div key={t.tool_call_id} className="flex items-center gap-2 font-mono text-xs">
-              {isRunning ? (
-                <svg className="h-3.5 w-3.5 animate-spin text-blue-600" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-                </svg>
-              ) : (
-                <span className={`inline-block h-2 w-2 rounded-full ${t.status === 'ok' ? 'bg-emerald-500' : 'bg-rose-500'}`}></span>
-              )}
-              <span className={`font-semibold ${labelColor}`}>{label}</span>
-              <span className="text-slate-700">{t.tool_name || t.tool_call_id}</span>
-              {isRunning ? <span className="text-slate-400">运行中…</span> : null}
-              {elapsedLabel ? <span className="text-slate-400 ml-auto">{elapsedLabel}</span> : null}
+            <div key={t.tool_call_id} className="space-y-1">
+              <div className="flex items-center gap-2 font-mono text-xs">
+                {isRunning ? (
+                  <svg className="h-3.5 w-3.5 animate-spin text-blue-600" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                  </svg>
+                ) : (
+                  <span className={`inline-block h-2 w-2 rounded-full ${t.status === 'ok' ? 'bg-emerald-500' : 'bg-rose-500'}`}></span>
+                )}
+                <span className={`font-semibold ${labelColor}`}>{label}</span>
+                <span className="text-slate-700">{t.tool_name || t.tool_call_id}</span>
+                {isRunning ? <span className="text-slate-400">运行中…</span> : null}
+                {latestProgress ? (
+                  <span className="text-slate-400">
+                    模块 {latestProgress.completed || progress.length}/{latestProgress.total || '?'}
+                  </span>
+                ) : null}
+                {elapsedLabel ? <span className="text-slate-400 ml-auto">{elapsedLabel}</span> : null}
+              </div>
+              {progress.length > 0 ? (
+                <div className="ml-5 flex flex-wrap gap-1.5">
+                  {progress.map((p, idx) => (
+                    <span key={`${p.uid || 'uid'}-${p.module || idx}-${idx}`} className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${p.status === 'ok' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
+                      {p.module || 'module'} {p.status === 'ok' ? '完成' : '失败'}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
             </div>
           );
         })}

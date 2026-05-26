@@ -362,7 +362,7 @@ graph LR
 本批 4 Plan 是 Orchestrator Agent V1。按“试点成功后封装成 Skill 推广”原则，V2 候选项：
 
 1. **Skill 封装**：把 “NL → 画像分析链路” 封装成 ai-code-review 风格的 Skill，方便扩展到其他 Agent（如风控 Agent / 营销 Agent）。
-2. **Persistent Memory**：V1 已从本地 JSON 原型升级为 SQLite + FTS5 长期记忆，支持 `user_id/project_id/country` 隔离、跨 session 召回、Memory Inspector 管理和离线 memory eval；向量数据库 / embedding 仅在 FTS 评估不达标或记忆规模增长后再进入 V2。
+2. **Persistent Memory**：V1 已从本地 JSON 原型升级为 SQLite + FTS5 长期记忆，支持 `user_id/project_id/country` 隔离、跨 session 召回、Memory Inspector 管理和离线 memory eval；短期聊天历史独立存放在 `outputs/orchestrator_sessions/`，只用于 session 恢复，不参与长期召回；向量数据库 / embedding 仅在 FTS 评估不达标或记忆规模增长后再进入 V2。
 3. **Multi-tenant**：支持多分析师同时跑，session 隔离 + 配额隔离（突破当前全局 _ACK_PROVIDER 单例限制）。
 4. **自动批跑**：`query_data` 加 `unattended` 变体支持夜间 cron（突破 ACK 限制），需高级凭据 + IT 安全审批。
 
@@ -399,3 +399,4 @@ V2 启动前必须重新走 Vibe Coding Step 2 Brainstorming + 新 Design Doc + 
 - [2026-05-01] trace_analyzer 实装完成（docs/plans/trace-analyzer-plan.md）：六步管线全部 GREEN（24 + 3 = 27 新测试）+ /api/trace/{uid} 已挂载 main.py。零回归
 - [2026-05-02] 前端渐进加载迁移（参考项目融合）：Phase A 后端（shared_orchestrator 单例 + 模块缓存 + /api/analyze-module + /api/ui-config）+ Phase B 前端（SSE → 模块级渐进加载 + 假动画过渡 + ModuleStatusPanel + trace 独立加载）+ BehaviorPanel 中文乱码修复 + 大纲 LLM 摘要。270 passed 0 failed
 - [2026-05-25] Orchestrator Memory V1 落地：SQLite + FTS5 长期记忆、严格写入白名单、跨 session 召回、Memory Inspector 管理抽屉、软删除/归档/恢复、离线 memory eval runner。Checkpoint commit: `3c10d85`；行为契约见 `docs/specs/memory-behavior-contract.md`。
+- [2026-05-26] Orchestrator Chat progress / memory UI contract：新增 `tool_progress` 模块级进度事件、只读短期会话历史列表、长期记忆状态文案边界；契约见 `docs/specs/orchestrator-chat-progress-memory-ui-contract.md`。

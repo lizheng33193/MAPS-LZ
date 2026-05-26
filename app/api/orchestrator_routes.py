@@ -34,7 +34,7 @@ from app.services.orchestrator_agent.memory_store import (
 )
 from app.services.orchestrator_agent.schemas import OrchestratorChatRequest
 from app.services.orchestrator_agent.session_store import (
-    create_session, get_session, save_session,
+    create_session, get_session, list_sessions, save_session,
 )
 
 
@@ -92,6 +92,34 @@ async def create_session_endpoint(body: _CreateSessionBody, request: Request) ->
         "session_id": sess.session_id,
         "created_at": sess.created_at.isoformat(),
         **identity,
+    }
+
+
+@router.get("/sessions")
+async def list_sessions_endpoint(
+    request: Request,
+    user_id: Optional[str] = None,
+    project_id: Optional[str] = None,
+    country: Optional[str] = None,
+    limit: int = 20,
+) -> dict:
+    identity = _identity_from_request(
+        request,
+        user_id=user_id,
+        project_id=project_id,
+        country=country,
+    )
+    rows = list_sessions(
+        user_id=identity["user_id"],
+        project_id=identity["project_id"],
+        country=identity["country"],
+        limit=limit,
+    )
+    return {
+        "success": True,
+        **identity,
+        "limit": max(1, min(100, int(limit or 20))),
+        "sessions": rows,
     }
 
 

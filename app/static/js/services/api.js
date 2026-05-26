@@ -190,6 +190,13 @@ async function fetchOrchestratorSession(sessionId) {
   return res.json();
 }
 
+async function fetchOrchestratorSessions(params) {
+  const res = await fetch(`/api/orchestrator/sessions${memoryQueryString(params || { limit: 20 })}`);
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(payload.detail || `fetchOrchestratorSessions ${res.status}`);
+  return payload;
+}
+
 async function fetchMemoryStatus() {
   const res = await fetch('/api/orchestrator/memory/status');
   const payload = await res.json().catch(() => ({}));
@@ -277,6 +284,6 @@ window.AppServices = window.AppServices || {};
 window.AppServices.api = {
   analyzeByUid, analyzeByFile, analyzeByUidStream, fetchTrace, fetchUiConfig, analyzeModule,
   createOrchestratorSession, sendOrchestratorMessage, openOrchestratorStream,
-  ackOrchestratorTool, fetchOrchestratorSession, fetchMemoryStatus, queryMemory,
+  ackOrchestratorTool, fetchOrchestratorSession, fetchOrchestratorSessions, fetchMemoryStatus, queryMemory,
   listMemories, createMemory, updateMemory, archiveMemory, restoreMemory, deleteMemory
 };

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # 6 国短码（与 docs/skills/orchestrator/*.md 文件名对齐）
@@ -38,7 +38,7 @@ class ParseUidFileOutput(BaseModel):
 
 class RunProfileInput(BaseModel):
     uids: list[str] = Field(..., min_length=1, max_length=200)
-    app_time: str = Field(..., description="ISO8601 格式 application_time")
+    app_time: Optional[str] = Field(None, description="ISO8601 格式 application_time；未提供时由模块走默认口径")
     modules: Optional[list[ProfileModule]] = None  # None = 默认 ["app"]
 
 
@@ -54,6 +54,10 @@ class RunTraceInput(BaseModel):
 
 
 class RunTraceOutput(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    uid: Optional[str] = None
+    status: str = "unknown"
     events: list[dict[str, Any]] = Field(default_factory=list)
     summary: dict[str, Any] = Field(default_factory=dict)
 

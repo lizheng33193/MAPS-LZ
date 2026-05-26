@@ -13,7 +13,7 @@ import pytest
 
 from app.services.orchestrator_agent.schemas import (
     OrchestratorChatRequest, ParseUidFileInput, RunProfileInput,
-    RunTraceInput, QueryDataInput,
+    RunTraceInput, RunTraceOutput, QueryDataInput,
     MemoryWriteInput, MemoryReadInput,
     OrchestratorSession,
 )
@@ -49,9 +49,9 @@ def test_run_profile_input_validates_uids_max():
         RunProfileInput(uids=["a"] * 201, app_time="2026-04-30", modules=["app"])
 
 
-def test_run_profile_input_app_time_required():
-    with pytest.raises(ValueError):
-        RunProfileInput(uids=["u1"], modules=["app"])
+def test_run_profile_input_app_time_optional():
+    req = RunProfileInput(uids=["u1"], modules=["app"])
+    assert req.app_time is None
 
 
 def test_run_trace_input_days_range():
@@ -59,6 +59,18 @@ def test_run_trace_input_days_range():
         RunTraceInput(uid="MX0001", days=0)
     with pytest.raises(ValueError):
         RunTraceInput(uid="MX0001", days=91)
+
+
+def test_run_trace_output_preserves_dashboard_payload():
+    out = RunTraceOutput(
+        uid="MX0001",
+        status="ok",
+        event_window={"start": "s", "end": "e", "total_events": 3, "analyzed_events": 3},
+        path_graph={"top_pages": [], "top_transitions": []},
+    )
+    dumped = out.model_dump(mode="json")
+    assert dumped["event_window"]["total_events"] == 3
+    assert dumped["path_graph"]["top_pages"] == []
 
 
 def test_query_data_input_country_literal():
@@ -132,6 +144,14 @@ def test_get_system_prompt_v1_loads():
     assert "Orchestrator Agent" in prompt
     assert "parse_uid_file" in prompt
     assert "query_data" in prompt
+
+
+def test_system_prompt_disambiguates_profile_and_trace():
+    prompt = get_system_prompt_v1()
+    assert '分析这个用户' in prompt
+    assert 'modules=["app","behavior","credit","comprehensive","product","ops"]' in prompt
+    assert "run_trace is not a substitute for run_profile" in prompt
+    assert "Do not repeat an identical tool call" in prompt
 
 
 def test_assemble_system_prompt_includes_country_section():

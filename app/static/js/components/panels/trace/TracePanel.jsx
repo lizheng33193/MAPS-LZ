@@ -120,8 +120,8 @@ function ChurnRootCauseBar({ causes }) {
 
 function HeaderBlock({ status, response }) {
   const ew = (response && response.event_window) || {};
-  const totalEvents = response && response.total_events;
-  const analyzedEvents = response && response.analyzed_events;
+  const totalEvents = response && (response.total_events ?? ew.total_events);
+  const analyzedEvents = response && (response.analyzed_events ?? ew.analyzed_events);
   const badgeClass = STATUS_BADGE_CLASS[status] || 'bg-slate-100 text-slate-600';
   return (
     <div className="rounded-2xl bg-white p-6 shadow-sm border border-slate-200">

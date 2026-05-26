@@ -12,16 +12,30 @@ const {
 const { createOrchestratorSession, sendOrchestratorMessage, openOrchestratorStream, ackOrchestratorTool, fetchOrchestratorSession } = window.AppServices.api;
 const { useReducer, useState, useRef, useEffect, useCallback } = React;
 
+const PROFILE_MODULE_ORDER = ['app', 'behavior', 'credit', 'comprehensive', 'product', 'ops'];
+const PROFILE_MODULE_LABELS = {
+  comprehensive: '综合画像',
+  app: 'App画像',
+  behavior: '行为画像',
+  credit: '征信画像',
+  product: '产品策略',
+  ops: '运营策略',
+};
+
 function ChatPanel({ onProfileReady, onProfilesPending, onTraceReady, onJumpToTab }) {
   const [state, dispatch] = useReducer(chatReducer, chatInitialState);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [ingestedUids, setIngestedUids] = useState([]);
-  const [hasTrace, setHasTrace] = useState(false);
+  const [traceUids, setTraceUids] = useState([]);
+  const [profileModulesByUid, setProfileModulesByUid] = useState({});
+  const [profileExpectedModulesByUid, setProfileExpectedModulesByUid] = useState({});
   const [selectedJumpUid, setSelectedJumpUid] = useState(null);
   const [now, setNow] = useState(Date.now());
   const esRef = useRef(null);
   const dispatchedToolsRef = useRef(new Set());
+  const dispatchedProfileResultsRef = useRef(new Set());
+  const dispatchedProgressRef = useRef(new Set());
   const pendingNotifiedRef = useRef(new Set());
   const onProfileReadyRef = useRef(onProfileReady);
   const onProfilesPendingRef = useRef(onProfilesPending);
@@ -29,6 +43,46 @@ function ChatPanel({ onProfileReady, onProfilesPending, onTraceReady, onJumpToTa
   useEffect(() => { onProfileReadyRef.current = onProfileReady; }, [onProfileReady]);
   useEffect(() => { onProfilesPendingRef.current = onProfilesPending; }, [onProfilesPending]);
   useEffect(() => { onTraceReadyRef.current = onTraceReady; }, [onTraceReady]);
+
+  function rememberProfileUid(targetUid) {
+    if (!targetUid) return;
+    setIngestedUids((prev) => prev.includes(targetUid) ? prev : prev.concat([targetUid]));
+  }
+
+  function rememberExpectedModules(uids, modules) {
+    const normalizedModules = Array.isArray(modules) && modules.length ? modules : ['app'];
+    setProfileExpectedModulesByUid((prev) => {
+      const next = { ...prev };
+      (uids || []).forEach((u) => {
+        if (u) next[u] = normalizedModules;
+      });
+      return next;
+    });
+  }
+
+  function rememberCompletedModule(targetUid, moduleName) {
+    if (!targetUid || !moduleName) return;
+    setProfileModulesByUid((prev) => {
+      const current = prev[targetUid] || {};
+      if (current[moduleName]) return prev;
+      return {
+        ...prev,
+        [targetUid]: { ...current, [moduleName]: true },
+      };
+    });
+  }
+
+  function dispatchProfileRow(row, resultKey) {
+    if (!row || !row.uid || !row.module || !row.result) return;
+    const key = resultKey || `${row.uid}:${row.module}`;
+    const isOk = row.result.status === 'ok' && row.result.data;
+    rememberProfileUid(row.uid);
+    if (isOk) rememberCompletedModule(row.uid, row.module);
+    if (dispatchedProfileResultsRef.current.has(key)) return;
+    dispatchedProfileResultsRef.current.add(key);
+    const cb = onProfileReadyRef.current;
+    if (cb) cb({ uid: row.uid, module: row.module, payload: row.result });
+  }
 
   // 2026-05-04 方案 A v3：tool_started 时立即把 (uids × modules) 全置 loading，
   // 让上面 6 个 Tab 卡片立即显示"分析中..."动画，避免 chat 跑大批量时 UI 像卡死。
@@ -41,9 +95,30 @@ function ChatPanel({ onProfileReady, onProfilesPending, onTraceReady, onJumpToTa
       const uids = Array.isArray(inp.uids) ? inp.uids : [];
       const modules = Array.isArray(inp.modules) && inp.modules.length ? inp.modules : ['app'];
       if (uids.length === 0) return;
+      uids.forEach((u) => rememberProfileUid(u));
+      rememberExpectedModules(uids, modules);
       const cb = onProfilesPendingRef.current;
       if (cb) cb({ uids, modules });
       pendingNotifiedRef.current.add(t.tool_call_id);
+    });
+  }, [state.toolCalls]);
+
+  // run_profile 在工具运行中会推送模块级 tool_progress；
+  // 这里即时把已完成模块写回 Dashboard，最终 tool_completed 再做补漏。
+  useEffect(() => {
+    state.toolCalls.forEach((t) => {
+      if (t.tool_name !== 'run_profile') return;
+      const progress = Array.isArray(t.progress) ? t.progress : [];
+      progress.forEach((p, idx) => {
+        if (!p || p.progress_type !== 'profile_module_completed') return;
+        const progressKey = `${t.tool_call_id}:${p.uid || ''}:${p.module || ''}:${idx}`;
+        if (dispatchedProgressRef.current.has(progressKey)) return;
+        dispatchedProgressRef.current.add(progressKey);
+        dispatchProfileRow(
+          { uid: p.uid, module: p.module, result: p.result },
+          `${t.tool_call_id}:${p.uid}:${p.module}`,
+        );
+      });
     });
   }, [state.toolCalls]);
 
@@ -55,28 +130,16 @@ function ChatPanel({ onProfileReady, onProfilesPending, onTraceReady, onJumpToTa
       if (t.status !== 'ok' || !t.output) return;
       if (dispatchedToolsRef.current.has(t.tool_call_id)) return;
       if (t.tool_name === 'run_profile' && Array.isArray(t.output.results)) {
-        const cb = onProfileReadyRef.current;
-        const uidsTouched = new Set();
         t.output.results.forEach((row) => {
-          if (!row || !row.uid || !row.module || !row.result) return;
-          if (cb) cb({ uid: row.uid, module: row.module, payload: row.result });
-          uidsTouched.add(row.uid);
+          dispatchProfileRow(row, `${t.tool_call_id}:${row && row.uid}:${row && row.module}`);
         });
-        if (uidsTouched.size > 0) {
-          setIngestedUids((prev) => {
-            const merged = new Set(prev);
-            uidsTouched.forEach((u) => merged.add(u));
-            return Array.from(merged);
-          });
-        }
         dispatchedToolsRef.current.add(t.tool_call_id);
       } else if (t.tool_name === 'run_trace' && t.output) {
         const traceUid = (t.input && t.input.uid) || null;
         const cb = onTraceReadyRef.current;
         if (traceUid && cb) {
           cb({ uid: traceUid, payload: t.output });
-          setIngestedUids((prev) => prev.includes(traceUid) ? prev : prev.concat([traceUid]));
-          setHasTrace(true);
+          setTraceUids((prev) => prev.includes(traceUid) ? prev : prev.concat([traceUid]));
         }
         dispatchedToolsRef.current.add(t.tool_call_id);
       }
@@ -211,6 +274,21 @@ function ChatPanel({ onProfileReady, onProfilesPending, onTraceReady, onJumpToTa
     if (esRef.current) esRef.current.close();
   }, []);
 
+  const jumpUids = ingestedUids.length > 0 ? ingestedUids : traceUids;
+  const selectedDashboardUid = jumpUids.includes(selectedJumpUid) ? selectedJumpUid : jumpUids[0];
+  const canJumpTrace = selectedDashboardUid ? traceUids.includes(selectedDashboardUid) : false;
+  const expectedModulesForUid = (selectedDashboardUid && profileExpectedModulesByUid[selectedDashboardUid]) || PROFILE_MODULE_ORDER;
+  const completedModulesForUid = selectedDashboardUid
+    ? expectedModulesForUid.filter((m) => profileModulesByUid[selectedDashboardUid] && profileModulesByUid[selectedDashboardUid][m])
+    : [];
+  const profileComplete = expectedModulesForUid.length > 0 && completedModulesForUid.length >= expectedModulesForUid.length;
+  const jumpTabs = ingestedUids.length > 0
+    ? [
+        ...completedModulesForUid.map((id) => ({ id, label: PROFILE_MODULE_LABELS[id] || id })),
+        ...(canJumpTrace ? [{ id: 'trace', label: '深度行为解析' }] : []),
+      ]
+    : [{ id: 'trace', label: '深度行为解析' }];
+
   return (
     <section className="flex flex-col gap-4 min-h-[520px]">
       <div>
@@ -252,16 +330,23 @@ function ChatPanel({ onProfileReady, onProfilesPending, onTraceReady, onJumpToTa
         })() : null}
       </div>
       <ChatAckCard pending={state.pendingAck} onApprove={onApprove} onReject={onReject} />
-      {ingestedUids.length > 0 && onJumpToTab ? (
+      {jumpUids.length > 0 && onJumpToTab ? (
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
           <div className="text-sm font-semibold text-emerald-800">
-            已生成 {ingestedUids.length} 位用户的画像，可查看完整 dashboard：
+            {ingestedUids.length > 0
+              ? `${profileComplete ? '完整画像已生成' : '画像分析进行中'}：${selectedDashboardUid || ingestedUids.length + ' 位用户'} 已完成 ${completedModulesForUid.length}/${expectedModulesForUid.length} 个画像模块`
+              : `已生成 ${traceUids.length} 位用户的深度行为解析，可查看 trace dashboard：`}
           </div>
-          {ingestedUids.length > 1 ? (
+          {ingestedUids.length > 0 ? (
+            <div className="mt-1 text-xs text-emerald-700">
+              模块完成后会立即出现在下方，可先查看已完成模块；最终完成后再展示完整画像。
+            </div>
+          ) : null}
+          {jumpUids.length > 1 ? (
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <span className="text-xs text-emerald-700">目标 UID：</span>
-              {ingestedUids.map((u) => {
-                const active = (selectedJumpUid || ingestedUids[0]) === u;
+              {jumpUids.map((u) => {
+                const active = selectedDashboardUid === u;
                 return (
                   <button
                     key={u}
@@ -278,26 +363,20 @@ function ChatPanel({ onProfileReady, onProfilesPending, onTraceReady, onJumpToTa
               })}
             </div>
           ) : (
-            <div className="mt-1 text-xs text-emerald-700 font-mono">{ingestedUids[0]}</div>
+            <div className="mt-1 text-xs text-emerald-700 font-mono">{jumpUids[0]}</div>
           )}
           <div className="mt-2 flex flex-wrap gap-2">
-            {[
-              { id: 'comprehensive', label: '综合画像' },
-              { id: 'app', label: 'App画像' },
-              { id: 'behavior', label: '行为画像' },
-              { id: 'credit', label: '征信画像' },
-              { id: 'product', label: '产品策略' },
-              { id: 'ops', label: '运营策略' },
-              ...(hasTrace ? [{ id: 'trace', label: '深度行为解析' }] : []),
-            ].map((t) => (
+            {jumpTabs.length > 0 ? jumpTabs.map((t) => (
               <button
                 key={t.id}
-                onClick={() => onJumpToTab(t.id, selectedJumpUid || ingestedUids[0])}
+                onClick={() => onJumpToTab(t.id, selectedDashboardUid)}
                 className="rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 border border-emerald-300 hover:bg-emerald-100 transition-colors"
               >
                 {t.label} →
               </button>
-            ))}
+            )) : (
+              <span className="text-xs text-emerald-700">等待第一个画像模块完成...</span>
+            )}
           </div>
         </div>
       ) : null}
