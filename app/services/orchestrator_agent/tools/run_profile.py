@@ -6,6 +6,7 @@ modules 默认 ["app"]；遍历 (uid × module) 调 analyze_module。
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -26,9 +27,33 @@ def run_profile(
     completed = 0
     for uid in input_data.uids:
         for mod in modules:
-            r = orch.analyze_module(
-                uid=uid, module=mod, application_time=input_data.app_time,
-            )
+            started = time.perf_counter()
+            if progress_callback is not None:
+                progress_callback({
+                    "progress_type": "profile_module_started",
+                    "uid": uid,
+                    "module": mod,
+                    "status": "running",
+                    "completed": completed,
+                    "total": total,
+                })
+            try:
+                r = orch.analyze_module(
+                    uid=uid, module=mod, application_time=input_data.app_time,
+                )
+            except Exception as exc:
+                if progress_callback is not None:
+                    progress_callback({
+                        "progress_type": "profile_module_error",
+                        "uid": uid,
+                        "module": mod,
+                        "status": "error",
+                        "completed": completed,
+                        "total": total,
+                        "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                        "error": str(exc),
+                    })
+                raise
             completed += 1
             results.append({"uid": uid, "module": mod, "result": r})
             if progress_callback is not None:
@@ -40,6 +65,7 @@ def run_profile(
                     "status": "ok" if r.get("status") == "ok" else "error",
                     "completed": completed,
                     "total": total,
+                    "elapsed_ms": int((time.perf_counter() - started) * 1000),
                 })
     return RunProfileOutput(
         results=results,

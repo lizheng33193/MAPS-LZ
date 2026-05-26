@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 import queue
 import re
 import threading
@@ -45,6 +46,7 @@ from app.services.orchestrator_agent.tools import get_tool_registry
 
 
 MAX_ROUNDS = 15
+LOGGER = logging.getLogger(__name__)
 
 # R7 P0-3 Knowledge 层注入：在首轮 LLM call 前用 keyword regex 从 prompt 中提取 country code，
 # 传给 assemble_system_prompt(country) 动态拼接对应 docs/skills/orchestrator/{country}.md。
@@ -318,6 +320,13 @@ async def run_agent_loop(
                         while True:
                             kind, payload, worker_exc = await asyncio.to_thread(progress_q.get)
                             if kind == "progress":
+                                _log_run_profile_progress(
+                                    session_id=session.session_id,
+                                    tool_call_id=tool_call_id,
+                                    payload=payload or {},
+                                )
+                                if (payload or {}).get("progress_type") != "profile_module_completed":
+                                    continue
                                 yield {
                                     "type": "tool_progress",
                                     "tool_call_id": tool_call_id,
@@ -438,3 +447,38 @@ def _call_tool_with_optional_progress(tool_fn, input_obj, progress_callback):
     if supports_progress:
         return tool_fn(input_obj, progress_callback=progress_callback)
     return tool_fn(input_obj)
+
+
+def _log_run_profile_progress(session_id: str, tool_call_id: str, payload: dict) -> None:
+    progress_type = payload.get("progress_type") or "profile_module_progress"
+    event = {
+        "profile_module_started": "run_profile_module_started",
+        "profile_module_completed": "run_profile_module_completed",
+        "profile_module_error": "run_profile_module_error",
+    }.get(progress_type, "run_profile_module_progress")
+    extra = {
+        "event": event,
+        "session_id": session_id,
+        "tool_call_id": tool_call_id,
+        "uid": payload.get("uid"),
+        # `module` is a reserved LogRecord attribute, so keep the structured
+        # value under profile_module while preserving module=... in the message.
+        "profile_module": payload.get("module"),
+        "completed": payload.get("completed"),
+        "total": payload.get("total"),
+        "status": payload.get("status"),
+        "elapsed_ms": payload.get("elapsed_ms"),
+    }
+    LOGGER.info(
+        "%s session_id=%s tool_call_id=%s uid=%s module=%s completed=%s total=%s status=%s elapsed_ms=%s",
+        event,
+        session_id,
+        tool_call_id,
+        payload.get("uid"),
+        payload.get("module"),
+        payload.get("completed"),
+        payload.get("total"),
+        payload.get("status"),
+        payload.get("elapsed_ms"),
+        extra=extra,
+    )
