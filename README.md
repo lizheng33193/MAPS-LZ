@@ -967,9 +967,13 @@ flowchart LR
 - `短期会话历史`：来自 `outputs/orchestrator_sessions/`，用于恢复最近对话，不参与跨 session 长期召回
 - `长期记忆`：来自 `outputs/memory/memory.sqlite3`，只有 `active` 状态会被召回并注入后续 Agent 决策
 - `deleted` 长期记忆是软删除：不参与召回，但仍可按状态列表查看和恢复
+- 短期会话历史支持前端搜索/筛选，只过滤 session 元数据，不读取完整 messages，不提供删除入口
+- 长期记忆行内会解释“为什么会被召回”：只有当前 identity 下的 active 记忆，且与查询、分类、国家或标签匹配时，才参与召回；archived / deleted 均不参与召回
 
 ### 6.1 顶部筛选区
 
+- `搜索会话`：在短期会话历史中按 session_id、最近用户消息或最终回复摘要过滤
+- `会话状态 / 会话国家 / 会话 Limit`：只影响短期会话历史列表，不影响长期记忆召回
 - `Query`：搜索关键词。为空时配合 `列表` 使用，表示列出最近记忆
 - `Category`：按记忆类型过滤
 - `Status`：按状态过滤

@@ -31,6 +31,11 @@ The frontend must treat `tool_progress` and `tool_completed` as idempotent
 sources for the same module result. `tool_completed` remains the durable final
 tool output written into the session.
 
+The backend should log module progress with enough fields to locate a stuck
+profile run: `session_id`, `tool_call_id`, `uid`, `module`, `completed`,
+`total`, `status`, and elapsed time where available. These logs are
+observability-only and do not change the SSE wire shape.
+
 ## Session History
 
 Short-term chat history is stored as session JSON under
@@ -55,6 +60,9 @@ Each session list item contains:
 The v1 UI supports listing and opening sessions only. It does not delete or
 hard-delete session files.
 
+The UI may add client-side search and filters over this metadata. Search must
+not require full message payloads and must keep session history read-only.
+
 ## Long-Term Memory
 
 Long-term memory remains SQLite + FTS5 at `outputs/memory/memory.sqlite3`.
@@ -67,3 +75,10 @@ UI language must make these statuses explicit:
   listed and restored.
 
 The v1 UI does not hard delete memory rows and does not clear deleted rows.
+
+The UI should explain recall eligibility in user-facing language:
+
+- Active rows for the current identity can be recalled when query/list filters
+  match their content, category, tags, or country.
+- Archived and deleted rows do not participate in recall, but can be viewed and
+  restored through the inspector.
