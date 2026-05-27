@@ -34,8 +34,8 @@ const VALID_DASHBOARD_TABS = ['comprehensive', 'app', 'behavior', 'credit', 'pro
 function getInitialDashboardTab() {
   const params = new URLSearchParams(window.location.search);
   const tab = params.get('tab');
-  if (VALID_DASHBOARD_TABS.includes(tab)) return tab;
-  if (params.get('session')) return 'chat';
+  if (VALID_DASHBOARD_TABS.includes(tab) && tab !== 'chat') return tab;
+  if (params.get('session')) return 'comprehensive';
   return 'comprehensive';
 }
 
@@ -44,6 +44,11 @@ function getInitialViewFromUrl() {
   const tab = params.get('tab');
   if (tab === 'chat' || params.get('session')) return 'dashboard';
   return 'home';
+}
+
+function getInitialChatFocusFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('tab') === 'chat' || Boolean(params.get('session'));
 }
 
 function createInitialModuleStates(status) {
@@ -74,6 +79,7 @@ function App() {
   // DashboardView 根据 selectedResult.uid 优先读这里，找不到再回退到全局 moduleStates。
   const [moduleStatesByUid, setModuleStatesByUid] = useState({});
   const [uidTransitionDurationMs, setUidTransitionDurationMs] = useState(DEFAULT_UID_TRANSITION_DURATION_MS);
+  const [chatFocusRequested, setChatFocusRequested] = useState(getInitialChatFocusFromUrl);
   // 2026-05-04 方案 A：NL Chat 跑过的 trace 结果种子，注入 DashboardView 的 traceCacheByUid，
   // 避免用户跳到 trace tab 时再发一次 /api/trace 请求（trace 同样会跑 LLM）。
   const [traceSeedByUid, setTraceSeedByUid] = useState({});
@@ -123,12 +129,13 @@ function App() {
   useEffect(() => {
     if (view !== 'dashboard') return;
     const params = new URLSearchParams(window.location.search);
-    if (params.get('tab') !== activeTab) {
-      params.set('tab', activeTab);
+    const tabTarget = (params.get('session') || chatFocusRequested) ? 'chat' : activeTab;
+    if (params.get('tab') !== tabTarget) {
+      params.set('tab', tabTarget);
       const nextUrl = `${window.location.pathname}?${params.toString()}${window.location.hash}`;
       window.history.replaceState({}, '', nextUrl);
     }
-  }, [view, activeTab]);
+  }, [view, activeTab, chatFocusRequested]);
 
   function playLoadingSequence() {
     return new Promise((resolve) => {
@@ -347,6 +354,7 @@ function App() {
 
     setErrorMessage('');
     setUidError('');
+    setChatFocusRequested(false);
     setView('loading');
 
     try {
@@ -407,7 +415,7 @@ function App() {
         setSelectedFile={setSelectedFile}
         onStartUid={() => handleAnalyze({ mode: 'uid' })}
         onStartFile={() => handleAnalyze({ mode: 'file' })}
-        onStartChat={() => { setActiveTab('chat'); setView('dashboard'); }}
+        onStartChat={() => { setActiveTab('comprehensive'); setChatFocusRequested(true); setView('dashboard'); }}
         errorMessage={errorMessage}
         country={country}
         onCountryChange={handleCountryChange}
@@ -428,7 +436,7 @@ function App() {
       setSelectedResultIndex={setSelectedResultIndex}
       moduleStates={moduleStates}
       onRetryModule={retryModule}
-      onBack={() => setView('home')}
+      onBack={() => { setChatFocusRequested(false); setView('home'); }}
       onChatProfileReady={ingestProfileFromChat}
       onChatProfilesPending={ingestProfilesPending}
       onChatTraceReady={ingestTraceFromChat}
@@ -436,6 +444,8 @@ function App() {
       moduleStatesByUid={moduleStatesByUid}
       country={country}
       onCountryChange={handleCountryChange}
+      chatFocusRequested={chatFocusRequested}
+      onChatFocusChange={setChatFocusRequested}
     />
   );
 }

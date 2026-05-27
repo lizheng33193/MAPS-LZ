@@ -1,4 +1,4 @@
-# Design Doc #04 — 前端"自然语言对话" Tab
+# Design Doc #04 — 前端"自然语言对话"工作区
 
 | 项 | 值 |
 |---|---|
@@ -9,7 +9,9 @@
 
 ## 0. 一句话目标（Goal）
 
-在前端 Dashboard 新增一个"自然语言对话" Tab，让分析师用自然语言一句话触发完整画像分析链路；前端消费后端 SSE 流，渲染对话流 + 工具调用过程 + SQL 确认弹窗 + 降级标识。本 Doc 不改后端 API 契约。
+在前端 Dashboard 保留左侧 7 个画像模块，并把自然语言对话改成右侧常驻工作区，让分析师既能查看结构化画像，也能持续进行自然语言追问；前端继续消费后端 SSE 流，渲染对话流、工具调用过程、SQL 确认弹窗与降级标识。本 Doc 不改后端 API 契约。
+
+2026-05-27 补充说明：工作区壳层不再做“参考式还原”，而是按 `/Users/zhengli/Desktop/html.html` 的桌面端结构逐项照抄：`body/#root` 必须是 `h-screen + overflow-hidden`，左侧分析区与右侧聊天区必须独立滚动，右侧 NL Chat 必须从 header 下沿一直贴到底部；各画像模块正文与后端契约保持不变。
 
 ## 1. 背景与目标
 
@@ -19,12 +21,13 @@
 
 ### 1.2 目标
 
-新增第 7 个 Tab "对话"：
+新增右侧常驻 NL Chat 工作区：
 - 输入框接受自然语言（如"分析泰国上周流失下单用户"）
 - 后端 Orchestrator Agent 自主排工具链
 - 前端流式渲染：assistant 推理 → 工具调用 → 工具结果 → 最终总结
 - SQL 取数前必须显示固定弹窗让用户 ACK
 - LLM 全挂时显示降级 badge
+- “记忆与历史”不再内嵌在聊天正文上方，统一进入右侧抽屉承载
 
 ### 1.3 不重新发明轮子
 
@@ -34,11 +37,23 @@
 
 ## 2. 信息架构
 
-### 2.1 Tab 位置
+### 2.1 页面位置
 
-`DashboardView.jsx` 顶部 Tab 列表新增"对话"，位置在最右（与 App/Behavior/Credit/Comprehensive/Trace/产品策略/运营策略 并列）。
+`DashboardView.jsx` 改为左右工作区：
+- 左侧保留 7 个画像模块卡片：`comprehensive / app / behavior / credit / product / ops / trace`
+- 右侧固定 `ChatPanel.jsx` 作为 NL Chat dock
+- 桌面端壳层样式按 `html.html` 逐项复刻：默认白底卡片，激活卡片彩色填充，标题字号、卡片尺寸、分隔条、右侧聊天列高度与参考稿一致，页面左右不再使用居中大容器留白
+- 在窄屏或空间不足时，聊天区自动折叠为 launcher，点击后以右侧 sheet 展开
+- `?tab=chat` 仍有效，但语义改为“打开/聚焦右侧聊天区”，不再表示左侧第 8 个 tab
 
-### 2.2 状态机
+### 2.2 记忆入口
+
+`MemoryInspector.jsx` 改为抽屉（drawer）：
+- 入口位于聊天头部“历史记忆”按钮
+- 抽屉宽度桌面默认 840px，窄屏取 `min(92vw, 840px)`
+- 抽屉内继续保留 `短期会话历史` 与 `长期记忆` 两部分
+
+### 2.3 状态机
 
 ```
        send()                tool_started/completed

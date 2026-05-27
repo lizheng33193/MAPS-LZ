@@ -12,8 +12,6 @@ const {
 const { useCallback, useEffect, useMemo, useState } = React;
 const {
   Archive,
-  ChevronDown,
-  ChevronUp,
   Database,
   Edit3,
   History,
@@ -26,12 +24,12 @@ const {
   Trash2,
   X,
 } = window.LucideReact || {};
+const { createPortal } = ReactDOM;
 
 const CATEGORY_OPTIONS = ['preference', 'feedback', 'project', 'reference', 'task', 'insight'];
 const STATUS_OPTIONS = ['active', 'archived', 'deleted', 'all'];
 
-function MemoryInspector() {
-  const [open, setOpen] = useState(false);
+function MemoryInspector({ open, onClose }) {
   const [status, setStatus] = useState(null);
   const [sessions, setSessions] = useState([]);
   const [sessionQuery, setSessionQuery] = useState('');
@@ -186,7 +184,6 @@ function MemoryInspector() {
     }
   }, [identity, loadList]);
 
-  const ToggleIcon = open ? ChevronUp : ChevronDown;
   const byCategory = status && status.by_category ? Object.entries(status.by_category) : [];
   const byStatus = status && status.by_status ? Object.entries(status.by_status) : [];
   const activeTotal = status && status.by_status && typeof status.by_status.active === 'number'
@@ -208,23 +205,40 @@ function MemoryInspector() {
     });
   }, [sessionQuery, sessionStatusFilter, sessions]);
 
-  return (
-    <section className="rounded-lg border border-slate-200 bg-white">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
-      >
-        <span className="flex min-w-0 items-center gap-2">
-          {Database ? <Database className="h-4 w-4 shrink-0 text-slate-500" /> : null}
-          <span className="font-semibold text-slate-800">记忆与历史</span>
-          <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">{activeTotal}</span>
-        </span>
-        {ToggleIcon ? <ToggleIcon className="h-4 w-4 shrink-0 text-slate-500" /> : null}
-      </button>
+  useEffect(() => {
+    if (!open) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape' && onClose) {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [open, onClose]);
 
-      {open ? (
-        <div className="border-t border-slate-200 px-4 py-4">
+  if (!open) {
+    return null;
+  }
+
+  return createPortal(
+    <div className="fixed inset-0 z-[80]">
+      <div className="absolute inset-0 bg-slate-950/35 backdrop-blur-[2px]" onClick={onClose}></div>
+      <div className="absolute inset-y-3 right-3 w-[min(94vw,920px)] overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.22)]">
+        <div className="flex h-full flex-col" onClick={(event) => event.stopPropagation()}>
+          <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-4">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                {Database ? <Database className="h-4 w-4 shrink-0 text-slate-500" /> : null}
+                <span className="font-semibold text-slate-800">历史记忆</span>
+                <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">{activeTotal}</span>
+              </div>
+              <p className="mt-1 text-sm text-slate-500">短期会话历史与长期记忆统一放在抽屉中查看与管理。</p>
+            </div>
+            <button type="button" onClick={onClose} className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-100">
+              {X ? <X className="h-4 w-4" /> : null}
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto px-5 py-5">
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
@@ -232,11 +246,11 @@ function MemoryInspector() {
                 <h3 className="text-sm font-semibold text-slate-800">短期会话历史</h3>
                 <Badge>{filteredSessions.length}/{sessions.length}</Badge>
               </div>
-              <button type="button" onClick={() => loadSessions()} disabled={loading} className="text-xs font-semibold text-slate-600 hover:text-slate-900">
+              <button type="button" onClick={() => loadSessions()} disabled={loading} className="text-sm font-semibold text-slate-600 hover:text-slate-900">
                 刷新
               </button>
             </div>
-            <p className="mt-1 text-xs leading-5 text-slate-500">
+            <p className="mt-1 text-sm leading-6 text-slate-500">
               短期会话历史来自 outputs/orchestrator_sessions，只用于恢复聊天上下文，不参与长期记忆召回。
             </p>
             <div className="mt-3 grid gap-2 md:grid-cols-[1fr_0.36fr_0.32fr_0.28fr]">
@@ -245,8 +259,8 @@ function MemoryInspector() {
                 <input
                   value={sessionQuery}
                   onChange={(e) => setSessionQuery(e.target.value)}
-                  className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400"
-                  placeholder="session id / 最近问题 / 最终回复"
+                    className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-400"
+                    placeholder="session id / 最近问题 / 最终回复"
                 />
               </label>
               <SelectField label="会话状态" value={sessionStatusFilter} onChange={setSessionStatusFilter} options={['all', 'completed', 'error', 'budget_exceeded']} />
@@ -259,13 +273,13 @@ function MemoryInspector() {
                   max="50"
                   value={sessionLimit}
                   onChange={(e) => setSessionLimit(e.target.value)}
-                  className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400"
+                  className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-400"
                 />
               </label>
             </div>
             <div className="mt-3 space-y-2">
               {filteredSessions.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-slate-200 bg-white px-3 py-3 text-xs text-slate-500">暂无可恢复会话。</div>
+                <div className="rounded-lg border border-dashed border-slate-200 bg-white px-3 py-3 text-sm text-slate-500">暂无可恢复会话。</div>
               ) : filteredSessions.map((item) => (
                 <button
                   key={item.session_id}
@@ -273,12 +287,12 @@ function MemoryInspector() {
                   onClick={() => openSession(item.session_id)}
                   className="block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-left hover:bg-slate-50"
                 >
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
                     <span className="font-mono font-semibold text-slate-700">{item.session_id}</span>
                     <span className="text-slate-400">{item.updated_at}</span>
                   </div>
-                  <div className="mt-1 truncate text-xs text-slate-600">{item.last_user_message_preview || '暂无用户消息'}</div>
-                  {item.final_message_preview ? <div className="mt-1 truncate text-xs text-slate-400">{item.final_message_preview}</div> : null}
+                  <div className="mt-1 truncate text-sm text-slate-600">{item.last_user_message_preview || '暂无用户消息'}</div>
+                  {item.final_message_preview ? <div className="mt-1 truncate text-sm text-slate-400">{item.final_message_preview}</div> : null}
                 </button>
               ))}
             </div>
@@ -290,10 +304,10 @@ function MemoryInspector() {
               <h3 className="text-sm font-semibold text-slate-800">长期记忆</h3>
               <Badge tone="blue">active: {activeTotal}</Badge>
             </div>
-            <p className="mt-1 text-xs leading-5 text-slate-500">
+            <p className="mt-1 text-sm leading-6 text-slate-500">
               active 会被召回；archived 不参与召回但可恢复；deleted 是软删除，不参与召回但仍可列表查看和恢复。删除操作会“移入已删除”，不会永久清空。
             </p>
-            <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-800">
+            <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-sm leading-6 text-blue-800">
               <span className="font-semibold">为什么会被召回：</span>
               当前 identity 下的 active 记忆，若与本轮问题、Query、Category、Country 或 tags 命中，就可能进入 Agent 上下文；archived / deleted 不参与召回，但可查看和恢复。
             </div>
@@ -328,9 +342,9 @@ function MemoryInspector() {
           </div>
 
           <div className="mt-3 grid gap-3 md:grid-cols-3">
-            <input value={userId} onChange={(e) => setUserId(e.target.value)} className="h-9 rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400" aria-label="user id" />
-            <input value={projectId} onChange={(e) => setProjectId(e.target.value)} className="h-9 rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400" aria-label="project id" />
-            <input value={country} onChange={(e) => setCountry(e.target.value)} className="h-9 rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400" aria-label="country" />
+            <input value={userId} onChange={(e) => setUserId(e.target.value)} className="h-9 rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-blue-400" aria-label="user id" />
+            <input value={projectId} onChange={(e) => setProjectId(e.target.value)} className="h-9 rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-blue-400" aria-label="project id" />
+            <input value={country} onChange={(e) => setCountry(e.target.value)} className="h-9 rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-blue-400" aria-label="country" />
           </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -369,7 +383,7 @@ function MemoryInspector() {
             </div>
           </div>
 
-          {status && status.db_path ? <div className="mt-3 truncate text-xs text-slate-500">{status.db_path}</div> : null}
+          {status && status.db_path ? <div className="mt-3 truncate text-sm text-slate-500">{status.db_path}</div> : null}
           {error ? <div className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div> : null}
 
           <div className="mt-4 space-y-2">
@@ -406,15 +420,17 @@ function MemoryInspector() {
             ))}
           </div>
         </div>
-      ) : null}
-    </section>
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }
 
 function SelectField({ label, value, onChange, options, emptyLabel }) {
   return (
     <label className="block">
-      {label ? <span className="mb-1 block text-xs font-semibold text-slate-500">{label}</span> : null}
+      {label ? <span className="mb-1 block text-sm font-semibold text-slate-500">{label}</span> : null}
       <select value={value} onChange={(e) => onChange(e.target.value)} className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-blue-400">
         {options.map((option) => <option key={option || 'empty'} value={option}>{option || emptyLabel || option}</option>)}
       </select>
@@ -424,9 +440,9 @@ function SelectField({ label, value, onChange, options, emptyLabel }) {
 
 function NumberField({ label, value, onChange }) {
   return (
-    <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-500">
+    <label className="inline-flex items-center gap-2 text-sm font-semibold text-slate-500">
       {label}
-      <input type="number" min="0" max="1" step="0.05" value={value} onChange={(e) => onChange(e.target.value)} className="h-9 w-20 rounded-lg border border-slate-200 px-2 text-xs outline-none focus:border-blue-400" />
+      <input type="number" min="0" max="1" step="0.05" value={value} onChange={(e) => onChange(e.target.value)} className="h-9 w-20 rounded-lg border border-slate-200 px-2 text-sm outline-none focus:border-blue-400" />
     </label>
   );
 }
@@ -437,7 +453,7 @@ function EditForm({ draft, setDraft, onSave, onCancel, loading }) {
       <textarea value={draft.content} onChange={(e) => setDraft({ ...draft, content: e.target.value })} className="min-h-[86px] w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400" />
       <div className="mt-2 grid gap-2 md:grid-cols-[0.7fr_1fr_0.4fr_0.4fr_auto]">
         <SelectField value={draft.category} onChange={(v) => setDraft({ ...draft, category: v })} options={CATEGORY_OPTIONS} />
-        <input value={draft.tags} onChange={(e) => setDraft({ ...draft, tags: e.target.value })} className="h-10 rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400" placeholder="tags" />
+        <input value={draft.tags} onChange={(e) => setDraft({ ...draft, tags: e.target.value })} className="h-10 rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-blue-400" placeholder="tags" />
         <NumberField label="importance" value={draft.importance} onChange={(v) => setDraft({ ...draft, importance: v })} />
         <NumberField label="confidence" value={draft.confidence} onChange={(v) => setDraft({ ...draft, confidence: v })} />
         <div className="flex items-center gap-1">
@@ -459,8 +475,8 @@ function IconButton({ title, onClick, icon: Icon, disabled }) {
 
 function Badge({ children, tone }) {
   const cls = tone === 'blue'
-    ? 'rounded bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700'
-    : 'rounded bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600';
+    ? 'rounded bg-blue-50 px-2 py-1 text-sm font-semibold text-blue-700'
+    : 'rounded bg-slate-100 px-2 py-1 text-sm font-semibold text-slate-600';
   return <span className={cls}>{children}</span>;
 }
 

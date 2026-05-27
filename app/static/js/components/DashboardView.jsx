@@ -3,7 +3,7 @@
 // Renamed JSX call: <ComprehensivePanelV2> -> <ComprehensivePanel>
 // (legacy V2 alias dropped per Phase F.5 user direction).
 
-const { ChevronRight, Bot, Network, Smartphone, Activity, CreditCard, Package, Headphones, MessageCircle } = window.LucideReact || {};
+const { ChevronRight, Bot, Network, Smartphone, Activity, CreditCard, Package, Headphones, Search, Settings } = window.LucideReact || {};
 const {
   AppPanel,
   BehaviorPanel,
@@ -29,6 +29,286 @@ const FALLBACK_RESULT_DASHBOARD = {
 };
 
 const SEGMENT_KEYS = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'];
+const MIN_CHAT_WIDTH = 320;
+const MAX_CHAT_WIDTH = 760;
+const DEFAULT_CHAT_WIDTH = 440;
+const DESKTOP_COLLAPSED_CHAT_WIDTH = 76;
+const SAFE_LEFT_WIDTH = 800;
+const CHAT_AUTO_COLLAPSE_BREAKPOINT = 1280;
+const DASHBOARD_LAYOUT_STYLES = `
+  #workspace {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+    background: #f4f7f9;
+  }
+
+  #left-panel {
+    flex: 1 1 auto;
+    min-width: 420px;
+    min-height: 0;
+    height: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-gutter: stable;
+  }
+
+  #left-panel::-webkit-scrollbar,
+  .dashboard-chat-column::-webkit-scrollbar,
+  #chat-container::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  #left-panel::-webkit-scrollbar-track,
+  .dashboard-chat-column::-webkit-scrollbar-track,
+  #chat-container::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  #left-panel::-webkit-scrollbar-thumb,
+  .dashboard-chat-column::-webkit-scrollbar-thumb,
+  #chat-container::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 999px;
+  }
+
+  .dashboard-left-inner {
+    min-height: 100%;
+  }
+
+  .module-grid-shell {
+    overflow-x: auto;
+    padding-bottom: 0.25rem;
+  }
+
+  .detail-scroll-shell {
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 0.25rem;
+  }
+
+  .dashboard-module-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    overflow: hidden;
+    min-height: 150px;
+    border-radius: 1rem;
+    border: 1px solid rgba(226, 232, 240, 0.8);
+    background: #ffffff;
+    padding: 1.25rem;
+    text-align: left;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+    transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+  }
+
+  .dashboard-module-card::before {
+    content: '';
+    position: absolute;
+    right: -1rem;
+    bottom: -1rem;
+    width: 5rem;
+    height: 5rem;
+    border-radius: 999px;
+    background: #f8fafc;
+    opacity: 0.5;
+    transition: transform 300ms ease, background-color 180ms ease, opacity 180ms ease;
+  }
+
+  .dashboard-module-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
+    border-color: var(--module-hover-border, rgba(191, 219, 254, 1));
+  }
+
+  .dashboard-module-card--active {
+    border-color: transparent;
+    background-image: linear-gradient(135deg, var(--module-bg-start), var(--module-bg-end));
+    box-shadow: 0 12px 24px var(--module-shadow);
+    transform: scale(1.02);
+  }
+
+  .dashboard-module-card--active::before {
+    background: rgba(255, 255, 255, 0.12);
+    opacity: 1;
+  }
+
+  .dashboard-module-card__title {
+    color: #1e293b;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.375;
+  }
+
+  .dashboard-module-card__subtitle {
+    margin-top: 0.125rem;
+    color: #94a3b8;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .dashboard-module-card__status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 500;
+  }
+
+  .dashboard-module-card__dot {
+    width: 8px;
+    height: 8px;
+    flex: 0 0 auto;
+    border-radius: 999px;
+    background: #cbd5e1;
+  }
+
+  .dashboard-module-card__icon {
+    color: var(--module-icon);
+  }
+
+  .dashboard-module-card--active .dashboard-module-card__title,
+  .dashboard-module-card--active .dashboard-module-card__subtitle,
+  .dashboard-module-card--active .dashboard-module-card__status,
+  .dashboard-module-card--active .dashboard-module-card__icon {
+    color: white;
+  }
+
+  .dashboard-module-card--active .dashboard-module-card__dot {
+    background: white;
+  }
+
+  .dashboard-module-card--active .dashboard-module-card__subtitle {
+    color: rgba(255, 255, 255, 0.82);
+  }
+
+  .dashboard-detail-content {
+    min-width: 0;
+    width: 100%;
+    overflow: visible;
+  }
+
+  .dashboard-detail-content > * {
+    min-width: 0;
+  }
+
+  .dashboard-secondary-stack {
+    display: grid;
+    gap: 1rem;
+  }
+
+  .dashboard-resize-rail {
+    position: relative;
+    width: 10px;
+    flex: 0 0 10px;
+    cursor: col-resize;
+    background: linear-gradient(to right, transparent 0, transparent 3px, rgba(203, 213, 225, 0.85) 3px, rgba(203, 213, 225, 0.85) 7px, transparent 7px, transparent 100%);
+  }
+
+  .dashboard-resize-handle {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 36px;
+    height: 92px;
+    transform: translate(-50%, -50%);
+    border-radius: 999px;
+    background: rgba(203, 213, 225, 0.65);
+    box-shadow: 0 12px 24px rgba(15, 23, 42, 0.08);
+    transition: background-color 180ms ease, box-shadow 180ms ease;
+  }
+
+  .dashboard-resize-rail:hover .dashboard-resize-handle,
+  .dashboard-resize-rail.is-active .dashboard-resize-handle {
+    background: rgba(96, 165, 250, 0.95);
+    box-shadow: 0 18px 30px rgba(59, 130, 246, 0.22);
+  }
+
+  .dashboard-resize-rail--collapsed {
+    cursor: default;
+  }
+
+  .dashboard-resize-rail--collapsed .dashboard-resize-handle {
+    width: 24px;
+    height: 56px;
+    background: rgba(203, 213, 225, 0.45);
+  }
+
+  .dashboard-chat-column {
+    position: relative;
+    flex: 0 0 auto;
+    height: 100%;
+    min-width: 76px;
+    overflow: hidden;
+    border-left: 1px solid rgba(226, 232, 240, 0.6);
+    background: rgba(255, 255, 255, 0.96);
+    box-shadow: -8px 0 30px -10px rgba(0, 0, 0, 0.05);
+    transition: width 220ms ease, min-width 220ms ease, box-shadow 220ms ease;
+  }
+
+  .dashboard-chat-column--collapsed {
+    box-shadow: none;
+  }
+
+  .dashboard-chat-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    background: rgba(15, 23, 42, 0.32);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 180ms ease;
+  }
+
+  .dashboard-chat-backdrop.is-open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .dashboard-chat-sheet {
+    position: fixed;
+    top: 3.5rem;
+    right: 0;
+    bottom: 0;
+    z-index: 70;
+    width: min(92vw, 560px);
+    transform: translateX(100%);
+    transition: transform 220ms ease;
+    border-left: 1px solid rgba(226, 232, 240, 0.6);
+    background: rgba(255, 255, 255, 0.98);
+    box-shadow: -16px 0 36px rgba(15, 23, 42, 0.12);
+  }
+
+  .dashboard-chat-sheet.is-open {
+    transform: translateX(0);
+  }
+
+  .dashboard-chat-launcher {
+    position: fixed;
+    right: 1rem;
+    bottom: 1rem;
+    z-index: 55;
+    box-shadow: 0 18px 34px rgba(37, 99, 235, 0.28);
+  }
+
+  @media (max-width: 1279px) {
+    #workspace {
+      display: block;
+    }
+
+    .dashboard-resize-rail,
+    .dashboard-chat-column {
+      display: none;
+    }
+  }
+`;
 
 function computeSegmentDistribution(results) {
   const counts = { S1: 0, S2: 0, S3: 0, S4: 0, S5: 0, S6: 0 };
@@ -52,7 +332,7 @@ function SegmentDistributionCard({ results }) {
     return null;
   }
   return (
-    <div className="bg-white rounded-xl shadow-sm p-6 mb-6">
+    <div className="bg-white rounded-xl shadow-sm p-6">
       <h3 className="text-base font-bold text-slate-800 mb-4">批量分析 · 客群分层分布 (S1-S6)</h3>
       <div className="space-y-2">
         {SEGMENT_KEYS.map((key) => {
@@ -77,6 +357,12 @@ function SegmentDistributionCard({ results }) {
   );
 }
 
+function clampChatWidth(width, viewportWidth) {
+  const viewWidth = Number(viewportWidth) || (typeof window !== 'undefined' ? window.innerWidth : MAX_CHAT_WIDTH + SAFE_LEFT_WIDTH);
+  const safeMax = Math.min(MAX_CHAT_WIDTH, Math.max(MIN_CHAT_WIDTH, viewWidth - SAFE_LEFT_WIDTH - 24));
+  return Math.min(safeMax, Math.max(MIN_CHAT_WIDTH, width));
+}
+
 function DashboardView({
   activeTab,
   setActiveTab,
@@ -93,27 +379,53 @@ function DashboardView({
   moduleStatesByUid,
   country = 'mx',
   onCountryChange,
+  chatFocusRequested = false,
+  onChatFocusChange,
 }) {
   const selectedResult = analysisResults[selectedResultIndex] || FALLBACK_RESULT_DASHBOARD;
   const uid = selectedResult.uid || 'unknown_user';
-  // 2026-05-04 方案 A v2：多 UID 隔离 — 优先读 moduleStatesByUid[uid]，
-  // 找不到再 fallback 到旧 moduleStates（单 UID / 批量文件路径走旧逻辑）。
   const effectiveModuleStates = (moduleStatesByUid && moduleStatesByUid[uid]) || moduleStates;
-  // 2026-05-05 修复 trace 卡片在行为数据缺失时一直“分析中...”的 BUG：
-  // 行为画像返回 data_missing 说明该 uid 的 behavior CSV 不存在，trace 不可能有数据，
-  // 直接锁定为 data_missing 不发 /api/trace 请求，避免卡片長期停在 loading。
   const behaviorStructured = (selectedResult
     && selectedResult.behavior_profile
     && selectedResult.behavior_profile.structured_result) || {};
   const behaviorDataMissing = behaviorStructured.status === 'data_missing';
-  const activeModuleState = (activeTab === 'trace' || activeTab === 'chat')
-    ? { status: 'success', error: '' }
-    : (effectiveModuleStates && effectiveModuleStates[activeTab]) || { status: 'success', error: '' };
-
   const [traceCacheByUid, setTraceCacheByUid] = React.useState({});
+  const [chatPanelWidth, setChatPanelWidth] = React.useState(DEFAULT_CHAT_WIDTH);
+  const [isResizingChat, setIsResizingChat] = React.useState(false);
+  const [desktopChatCollapsed, setDesktopChatCollapsed] = React.useState(false);
+  const [compactChatMode, setCompactChatMode] = React.useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth < CHAT_AUTO_COLLAPSE_BREAKPOINT : false
+  );
+  const [floatingChatOpen, setFloatingChatOpen] = React.useState(() =>
+    typeof window !== 'undefined'
+      ? (window.innerWidth < CHAT_AUTO_COLLAPSE_BREAKPOINT ? Boolean(chatFocusRequested) : true)
+      : Boolean(chatFocusRequested)
+  );
+  const dashboardTabs = [
+    { id: 'comprehensive', title: '综合画像', sub: 'COMPREHENSIVE', icon: Network, iconColor: '#f97316', bgStart: '#f5bf48', bgEnd: '#b04ed3', shadow: 'rgba(212, 106, 25, 0.28)' },
+    { id: 'app', title: 'App画像', sub: 'APP USAGE', icon: Smartphone, iconColor: '#3b82f6', bgStart: '#5db7f0', bgEnd: '#2c59d6', shadow: 'rgba(37, 99, 235, 0.28)' },
+    { id: 'behavior', title: '行为画像', sub: 'BEHAVIORAL', icon: Activity, iconColor: '#ef4444', bgStart: '#f49a59', bgEnd: '#d47167', shadow: 'rgba(234, 88, 12, 0.24)' },
+    { id: 'credit', title: '征信画像', sub: 'CREDIT REPORT', icon: CreditCard, iconColor: '#64748b', bgStart: '#8894a6', bgEnd: '#667182', shadow: 'rgba(71, 85, 105, 0.28)' },
+    { id: 'product', title: '产品策略', sub: 'PRODUCT ADVICE', icon: Package, iconColor: '#14b8a6', bgStart: '#8bd8a6', bgEnd: '#68bebd', shadow: 'rgba(20, 184, 166, 0.22)' },
+    { id: 'ops', title: '运营策略', sub: 'OPERATIONS', icon: Headphones, iconColor: '#8b5cf6', bgStart: '#b28ef4', bgEnd: '#8d72ea', shadow: 'rgba(139, 92, 246, 0.22)' },
+    { id: 'trace', title: '深度行为解析', sub: 'TRACE ANALYSIS', icon: Search, iconColor: '#a855f7', bgStart: '#d59dff', bgEnd: '#a855f7', shadow: 'rgba(168, 85, 247, 0.22)' },
+  ];
+  const hasVisibleTab = dashboardTabs.some((tab) => tab.id === activeTab);
+  const visibleActiveTab = hasVisibleTab ? activeTab : 'comprehensive';
+  const activeTabMeta = dashboardTabs.find((tab) => tab.id === visibleActiveTab) || dashboardTabs[0];
+  const activeModuleState = visibleActiveTab === 'trace'
+    ? { status: 'success', error: '' }
+    : (effectiveModuleStates && effectiveModuleStates[visibleActiveTab]) || { status: 'success', error: '' };
+  const detailPanelMinWidthClass = {
+    app: 'min-w-[1140px]',
+    behavior: 'min-w-[1100px]',
+    credit: 'min-w-[1160px]',
+    comprehensive: 'min-w-[980px]',
+    product: 'min-w-[960px]',
+    ops: 'min-w-[960px]',
+    trace: 'min-w-[960px]',
+  }[visibleActiveTab] || 'min-w-full';
 
-  // 2026-05-04 方案 A：把 NL Chat 跑过的 trace 种子合并进本地 traceCacheByUid，
-  // 让 trace tab 直接命中 chat 跑过的结果，省一次 /api/trace 调用与 LLM 推理。
   React.useEffect(() => {
     if (!traceSeedByUid) return;
     setTraceCacheByUid((prev) => {
@@ -130,10 +442,9 @@ function DashboardView({
   }, [traceSeedByUid]);
 
   React.useEffect(() => {
-    if (activeTab !== 'trace') return;
+    if (visibleActiveTab !== 'trace') return;
     if (!uid || uid === 'unknown_user') return;
     if (traceCacheByUid[uid]) return;
-    // 2026-05-05 行为数据缺失 → trace 直接置 data_missing，不发请求
     if (behaviorDataMissing) {
       setTraceCacheByUid((prev) => ({
         ...prev,
@@ -144,18 +455,10 @@ function DashboardView({
       }));
       return;
     }
-    let cancelled = false;
     setTraceCacheByUid((prev) => ({
       ...prev,
       [uid]: { requestStatus: 'loading' }
     }));
-    // 2026-05-05 修复 trace “一直分析中”：
-    // 以前 cleanup 同时做两件事造成调度问题：
-    //  (1) 置 cancelled=true 让 then/catch 跳过写 state（in-flight 结果丢了）
-    //  (2) 从 state 里 delete loading entry，下次入 tab useEffect 又发一轮
-    //  → 用户每切一次 trace tab 都重发，LLM 资源响应不上，前端永远 loading。
-    // 正确处理：**不走取消路径**。in-flight 请求以前端调度为准，
-    //   哪怕用户切走了也让响应居中写入缓存，下次切回直接命中不重发。
     window.AppServices.api.fetchTrace(uid).then((response) => {
       setTraceCacheByUid((prev) => ({
         ...prev,
@@ -167,7 +470,53 @@ function DashboardView({
         [uid]: { requestStatus: 'error', errorMessage: (err && err.message) || '请求失败' }
       }));
     });
-  }, [activeTab, uid, behaviorDataMissing]);
+  }, [visibleActiveTab, uid, behaviorDataMissing]);
+
+  React.useEffect(() => {
+    function syncChatViewportState() {
+      const compact = window.innerWidth < CHAT_AUTO_COLLAPSE_BREAKPOINT;
+      setCompactChatMode(compact);
+      setChatPanelWidth((current) => clampChatWidth(current, window.innerWidth));
+    }
+
+    syncChatViewportState();
+    window.addEventListener('resize', syncChatViewportState);
+    return () => window.removeEventListener('resize', syncChatViewportState);
+  }, []);
+
+  React.useEffect(() => {
+    if (compactChatMode) {
+      setFloatingChatOpen(Boolean(chatFocusRequested));
+      return;
+    }
+    if (chatFocusRequested) {
+      setDesktopChatCollapsed(false);
+    }
+    setFloatingChatOpen(false);
+  }, [chatFocusRequested, compactChatMode]);
+
+  React.useEffect(() => {
+    if (!isResizingChat || compactChatMode) return undefined;
+
+    function handlePointerMove(event) {
+      const nextWidth = window.innerWidth - event.clientX - 32;
+      setChatPanelWidth(clampChatWidth(nextWidth, window.innerWidth));
+    }
+
+    function handlePointerUp() {
+      setIsResizingChat(false);
+      document.body.style.userSelect = '';
+    }
+
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', handlePointerMove);
+    window.addEventListener('mouseup', handlePointerUp);
+    return () => {
+      document.body.style.userSelect = '';
+      window.removeEventListener('mousemove', handlePointerMove);
+      window.removeEventListener('mouseup', handlePointerUp);
+    };
+  }, [compactChatMode, isResizingChat]);
 
   function handleTraceRetry(targetUid) {
     setTraceCacheByUid((prev) => {
@@ -176,165 +525,296 @@ function DashboardView({
       return next;
     });
   }
-  const tabs = [
-    { id: 'comprehensive', title: '综合画像', sub: 'Comprehensive', icon: Network, bg: 'from-amber-400 to-fuchsia-600', shadow: 'shadow-fuchsia-500/30' },
-    { id: 'app', title: 'App画像', sub: 'App Usage', icon: Smartphone, bg: 'from-cyan-400 to-blue-600', shadow: 'shadow-blue-500/30' },
-    { id: 'behavior', title: '行为画像', sub: 'Behavioral', icon: Activity, bg: 'from-orange-400 to-red-500', shadow: 'shadow-red-500/30' },
-    { id: 'credit', title: '征信画像', sub: 'Credit Report', icon: CreditCard, bg: 'from-slate-500 to-slate-700', shadow: 'shadow-slate-500/30' },
-    { id: 'product', title: '产品策略', sub: 'Product Advice', icon: Package, bg: 'from-emerald-400 to-teal-500', shadow: 'shadow-emerald-500/30' },
-    { id: 'ops', title: '运营策略', sub: 'Operations', icon: Headphones, bg: 'from-violet-400 to-purple-500', shadow: 'shadow-violet-500/30' },
-    { id: 'trace', title: '深度行为解析', sub: 'Trace Analysis', icon: Activity, bg: 'from-purple-400 to-violet-600', shadow: 'shadow-violet-500/30' },
-    { id: 'chat', title: '自然语言对话', sub: 'NL Chat', icon: MessageCircle, bg: 'from-sky-400 to-blue-600', shadow: 'shadow-blue-500/30' }
-  ];
+
+  function handleOpenFloatingChat() {
+    setFloatingChatOpen(true);
+    if (onChatFocusChange) onChatFocusChange(true);
+  }
+
+  function handleCloseFloatingChat() {
+    setFloatingChatOpen(false);
+    if (onChatFocusChange) onChatFocusChange(false);
+  }
+
+  function handleToggleDesktopChat() {
+    setDesktopChatCollapsed((prev) => {
+      const next = !prev;
+      if (onChatFocusChange) onChatFocusChange(!next);
+      return next;
+    });
+  }
+
+  function renderActivePanel() {
+    if (visibleActiveTab === 'trace') {
+      return <TracePanel uid={uid} cacheEntry={traceCacheByUid[uid]} onRetry={() => handleTraceRetry(uid)} />;
+    }
+    return (
+      <ModuleStatusPanel state={activeModuleState} onRetry={() => onRetryModule && onRetryModule(visibleActiveTab)}>
+        {visibleActiveTab === 'comprehensive' && <ComprehensivePanel profile={selectedResult.comprehensive_profile} />}
+        {visibleActiveTab === 'app' && <AppPanel profile={selectedResult.app_profile} />}
+        {visibleActiveTab === 'behavior' && <BehaviorPanel profile={selectedResult.behavior_profile} />}
+        {visibleActiveTab === 'credit' && <RichCreditPanel profile={selectedResult.credit_profile} />}
+        {visibleActiveTab === 'product' && <ProductAdvicePanel profile={selectedResult.product_advice} />}
+        {visibleActiveTab === 'ops' && <OpsAdvicePanel profile={selectedResult.ops_advice} />}
+      </ModuleStatusPanel>
+    );
+  }
+
+  const ActiveDetailIcon = activeTabMeta.icon || Activity;
+  const hasMultipleResults = analysisResults.length > 1;
+  const showSecondaryStack = Boolean(selectedResult.standardized_labels) || hasMultipleResults;
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
-      <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between sticky top-0 z-50">
-        <div className="flex items-center gap-3">
-          <button onClick={onBack} className="p-2 hover:bg-slate-100 rounded-full text-slate-500 transition-colors">
-            <ChevronRight className="w-6 h-6 rotate-180" />
+    <div className="flex h-screen flex-col overflow-hidden bg-[#F4F7F9] font-sans text-slate-800">
+      <style>{DASHBOARD_LAYOUT_STYLES}</style>
+      <header className="relative z-20 flex h-14 shrink-0 items-center justify-between border-b border-slate-200/70 bg-white/90 px-6 shadow-sm backdrop-blur-md">
+        <div className="flex items-center gap-4">
+          <button onClick={onBack} className="rounded-full p-2 text-slate-400 transition-colors hover:text-slate-700">
+            <ChevronRight className="h-5 w-5 rotate-180" />
           </button>
-          <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center"><Bot className="w-6 h-6 text-white" /></div>
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 shadow-sm">
+            <Bot className="h-5 w-5 text-white" />
+          </div>
           <div>
-            <h1 className="text-xl font-bold text-slate-800">Multi-Agent Profiling System</h1>
-            <p className="text-xs text-slate-500">当前用户 UID: {uid}</p>
+            <h1 className="text-lg font-bold leading-tight text-slate-800">Multi-Agent Profiling System</h1>
+            <p className="text-xs text-slate-400">当前用户 UID: {uid}</p>
           </div>
         </div>
-        <div className="flex items-center gap-4">
+
+        <div className="flex items-center gap-4 text-sm">
           <select
             value={country}
             onChange={(e) => onCountryChange && onCountryChange(e.target.value)}
-            className="text-sm border border-slate-300 rounded-md px-2 py-1 bg-white"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700"
             title="切换国家"
           >
             <option value="mx">墨西哥 (MX)</option>
             <option value="th">泰国 (TH)</option>
           </select>
-          <span className="text-sm text-slate-500">当前模式: <span className="font-semibold text-slate-700 bg-slate-100 px-2 py-1 rounded">api-live</span></span>
-          <span className="text-sm text-slate-500">返回结果数: <span className="text-blue-600 font-semibold">{analysisResults.length}</span></span>
+          <div className="h-4 w-px bg-slate-200"></div>
+          <span className="text-slate-500">当前模式: <span className="font-medium text-slate-700">api-live</span></span>
+          <div className="h-4 w-px bg-slate-200"></div>
+          <span className="text-slate-500">返回结果数: <span className="font-medium text-blue-600">{analysisResults.length}</span></span>
         </div>
       </header>
 
-      <main className="flex-1 max-w-7xl w-full mx-auto p-6 flex flex-col gap-6">
-        <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
-          <div className="text-sm font-semibold text-slate-700 mb-3">用户结果切换</div>
-          <div className="flex gap-2 overflow-x-auto pb-1">
-            {analysisResults.map((item, index) => {
-              const isActive = selectedResultIndex === index;
-              const label = item.uid || `user_${index + 1}`;
-              return (
-                <button
-                  key={`${label}-${index}`}
-                  onClick={() => setSelectedResultIndex(index)}
-                  className={`px-4 py-2 rounded-xl text-sm font-medium whitespace-nowrap border transition-colors ${
-                    isActive
-                      ? 'bg-blue-600 text-white border-blue-600'
-                      : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-                  }`}
-                >
-                  {label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {selectedResult.standardized_labels ? (
-          <LabelsOverviewCard labels={selectedResult.standardized_labels} />
-        ) : null}
-
-        <SegmentDistributionCard results={analysisResults} />
-
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {tabs.map(tab => {
-            const isActive = activeTab === tab.id;
-            const Icon = tab.icon;
-            // 2026-05-05 trace 卡片状态联动 behavior data_missing，避免一直“分析中...”
-            let tabModuleState;
-            if (tab.id === 'trace') {
-              const traceEntry = traceCacheByUid[uid];
-              if (traceEntry) {
-                if (traceEntry.requestStatus === 'success') {
-                  const respStatus = traceEntry.response && traceEntry.response.status;
-                  tabModuleState = { status: (respStatus === 'data_missing' || respStatus === 'insufficient_events') ? 'no_data' : 'success' };
-                } else if (traceEntry.requestStatus === 'error') {
-                  tabModuleState = { status: 'error' };
-                } else {
-                  tabModuleState = { status: 'loading' };
-                }
-              } else if (behaviorDataMissing) {
-                tabModuleState = { status: 'no_data' };
-              } else {
-                tabModuleState = { status: 'idle' };
-              }
-            } else if (tab.id === 'chat') {
-              tabModuleState = { status: 'success' };
-            } else {
-              tabModuleState = effectiveModuleStates && effectiveModuleStates[tab.id];
-            }
-            const tabStatus = tabModuleState && tabModuleState.status;
-            const statusLabel = tabStatus === 'success' ? '已完成'
-              : tabStatus === 'loading' ? '分析中...'
-              : tabStatus === 'error' ? '模块报错'
-              : tabStatus === 'no_data' ? '暂无可用数据'
-              : '等待依赖';
-            return (
-              <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`relative overflow-hidden rounded-xl p-5 text-left transition-all duration-300 transform ${isActive ? `scale-105 shadow-xl ${tab.shadow} ring-2 ring-white ring-offset-2` : 'hover:scale-105 shadow-md hover:shadow-lg opacity-80 hover:opacity-100'} bg-gradient-to-br ${tab.bg}`}>
-                <div className="relative z-10 flex justify-between items-start">
-                  <div>
-                    <h3 className="text-xl font-bold text-white mb-1">{tab.title}</h3>
-                    <p className="text-xs text-white/80 uppercase tracking-wider">{tab.sub}</p>
-                    <p className="mt-3 text-xs font-semibold text-white/90">{statusLabel}</p>
-                    {tabStatus === 'loading' ? (
-                      <div className="skeleton-shimmer mt-4 space-y-2" aria-label="module loading skeleton">
-                        <div className="h-1.5 w-28 overflow-hidden rounded-full bg-white/25">
-                          <div className="loading-progress-bar h-full w-2/3 animate-pulse rounded-full bg-white/80"></div>
+      <main id="workspace" className="flex-1 flex overflow-hidden">
+        <section id="left-panel" className="flex-1 h-full overflow-y-auto">
+          <div className="px-6 pt-6 lg:px-8 lg:pt-8">
+            <div className="dashboard-left-inner max-w-5xl mx-auto w-full">
+              <section className="mb-8">
+                <div className="space-y-4">
+                  <h2 className="text-lg font-semibold text-slate-800 mb-4">用户结果切换</h2>
+                  <div className="space-y-3">
+                    {hasMultipleResults ? (
+                      <div className="rounded-2xl border border-slate-200/80 bg-white/90 p-4 shadow-sm">
+                        <div className="flex gap-2 overflow-x-auto pb-1">
+                          {analysisResults.map((item, index) => {
+                            const isActive = selectedResultIndex === index;
+                            const label = item.uid || `user_${index + 1}`;
+                            return (
+                              <button
+                                key={`${label}-${index}`}
+                                onClick={() => setSelectedResultIndex(index)}
+                                className={`whitespace-nowrap rounded-2xl border px-4 py-2 text-sm font-semibold transition-colors ${
+                                  isActive
+                                    ? 'border-blue-600 bg-blue-600 text-white shadow-sm'
+                                    : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
+                                }`}
+                              >
+                                {label}
+                              </button>
+                            );
+                          })}
                         </div>
-                        <div className="h-1.5 w-20 rounded-full bg-white/20"></div>
                       </div>
                     ) : null}
                   </div>
-                  {Icon ? <Icon className={`w-8 h-8 text-white ${isActive ? 'animate-pulse' : 'opacity-70'}`} /> : null}
-                </div>
-                <div className="absolute -bottom-6 -right-6 w-24 h-24 bg-white opacity-10 rounded-full blur-xl"></div>
-                <div className="absolute top-0 right-0 w-full h-full bg-gradient-to-t from-black/20 to-transparent pointer-events-none"></div>
-              </button>
-            );
-          })}
-        </div>
 
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 min-h-[560px]">
-          {activeTab === 'trace' ? (
-            <TracePanel uid={uid} cacheEntry={traceCacheByUid[uid]} onRetry={() => handleTraceRetry(uid)} />
-          ) : (
-            <ModuleStatusPanel state={activeModuleState} onRetry={() => onRetryModule && onRetryModule(activeTab)}>
-              {activeTab === 'comprehensive' && <ComprehensivePanel profile={selectedResult.comprehensive_profile} />}
-              {activeTab === 'app' && <AppPanel profile={selectedResult.app_profile} />}
-              {activeTab === 'behavior' && <BehaviorPanel profile={selectedResult.behavior_profile} />}
-              {activeTab === 'credit' && <RichCreditPanel profile={selectedResult.credit_profile} />}
-              {activeTab === 'product' && <ProductAdvicePanel profile={selectedResult.product_advice} />}
-              {activeTab === 'ops' && <OpsAdvicePanel profile={selectedResult.ops_advice} />}
-            </ModuleStatusPanel>
-          )}
-          {/* 2026-05-05 修复 NL Chat 切走后历史丢失：
-              原本 `activeTab === 'chat' ? <ChatPanel/> : ...` 是条件渲染，切走 unmount 会丢掉
-              messages / sessionId / dispatchedToolsRef 等全部内部 state，切回只能从 URL 碄复。
-              改为始终 mount，仅用 display 切换可见性 — 保留运行中的 SSE 与全部会话 state。 */}
-          <div style={{ display: activeTab === 'chat' ? 'block' : 'none' }}>
-            <ChatPanel
-              onProfileReady={onChatProfileReady}
-              onProfilesPending={onChatProfilesPending}
-              onTraceReady={onChatTraceReady}
-              onJumpToTab={(tabId, targetUid) => {
-                setActiveTab(tabId);
-                if (targetUid) {
-                  const idx = analysisResults.findIndex((r) => r && r.uid === targetUid);
-                  if (idx >= 0) setSelectedResultIndex(idx);
-                }
-              }}
-            />
+                  <div className="module-grid-shell overflow-x-auto pb-1">
+                    <div id="module-grid" className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 xl:min-w-[980px]">
+                      {dashboardTabs.map((tab) => {
+                        const isActive = visibleActiveTab === tab.id;
+                        const Icon = tab.icon;
+                        let tabModuleState;
+                        if (tab.id === 'trace') {
+                          const traceEntry = traceCacheByUid[uid];
+                          if (traceEntry) {
+                            if (traceEntry.requestStatus === 'success') {
+                              const respStatus = traceEntry.response && traceEntry.response.status;
+                              tabModuleState = { status: (respStatus === 'data_missing' || respStatus === 'insufficient_events') ? 'no_data' : 'success' };
+                            } else if (traceEntry.requestStatus === 'error') {
+                              tabModuleState = { status: 'error' };
+                            } else {
+                              tabModuleState = { status: 'loading' };
+                            }
+                          } else if (behaviorDataMissing) {
+                            tabModuleState = { status: 'no_data' };
+                          } else {
+                            tabModuleState = { status: 'idle' };
+                          }
+                        } else {
+                          tabModuleState = effectiveModuleStates && effectiveModuleStates[tab.id];
+                        }
+
+                        const tabStatus = tabModuleState && tabModuleState.status;
+                        const statusLabel = tabStatus === 'success' ? '已完成'
+                          : tabStatus === 'loading' ? '分析中...'
+                          : tabStatus === 'error' ? '模块报错'
+                          : tabStatus === 'no_data' ? '暂无可用数据'
+                          : '等待依赖';
+
+                        return (
+                          <button
+                            key={tab.id}
+                            onClick={() => setActiveTab(tab.id)}
+                            className={`dashboard-module-card ${isActive ? 'dashboard-module-card--active' : ''}`}
+                            style={{
+                              '--module-bg-start': tab.bgStart,
+                              '--module-bg-end': tab.bgEnd,
+                              '--module-shadow': tab.shadow,
+                              '--module-icon': tab.iconColor,
+                              '--module-hover-border': `${tab.iconColor}4d`,
+                            }}
+                          >
+                            <div className="relative z-10 mb-3 flex items-start justify-between gap-4">
+                              <div className="min-w-0">
+                                <h3 className="dashboard-module-card__title">{tab.title}</h3>
+                                <p className="dashboard-module-card__subtitle">{tab.sub}</p>
+                              </div>
+                              {Icon ? <Icon className="dashboard-module-card__icon h-5 w-5 shrink-0" /> : null}
+                            </div>
+
+                            <div className="relative z-10 mt-5">
+                              <div className="dashboard-module-card__status">
+                                <span className="dashboard-module-card__dot"></span>
+                                <span>{statusLabel}</span>
+                              </div>
+                              {tabStatus === 'loading' ? (
+                                <div className="skeleton-shimmer mt-4 space-y-2" aria-label="module loading skeleton">
+                                  <div className={`h-1.5 w-28 overflow-hidden rounded-full ${isActive ? 'bg-white/25' : 'bg-slate-200'}`}>
+                                    <div className={`loading-progress-bar h-full w-2/3 animate-pulse rounded-full ${isActive ? 'bg-white/80' : 'bg-slate-400'}`}></div>
+                                  </div>
+                                  <div className={`h-1.5 w-20 rounded-full ${isActive ? 'bg-white/20' : 'bg-slate-100'}`}></div>
+                                </div>
+                              ) : null}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </div>
           </div>
-        </div>
+
+          <div className="px-6 pb-8 lg:px-8">
+            <div className="space-y-8">
+              <section className="rounded-2xl border border-slate-200/60 bg-white/80 p-6 shadow-sm backdrop-blur-md min-h-[400px]">
+                <div className="mb-6 flex items-center justify-between gap-4 border-b border-slate-100 pb-4">
+                  <h2 className="text-lg font-semibold flex items-center gap-2 text-slate-800">
+                    {ActiveDetailIcon ? <ActiveDetailIcon className="h-5 w-5 text-blue-600" /> : null}
+                    <span id="detail-title">{activeTabMeta.title}</span> 数据详情
+                  </h2>
+                  <button className="text-sm text-slate-500 hover:text-blue-600 flex items-center gap-1">
+                    {Settings ? <Settings className="h-4 w-4" /> : null}
+                    配置项
+                  </button>
+                </div>
+
+                <div id="detail-content" className="text-slate-600">
+                  <div className="detail-scroll-shell">
+                    <div className="dashboard-detail-content">
+                      <div className={detailPanelMinWidthClass}>
+                        {renderActivePanel()}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              {showSecondaryStack ? (
+                <section className="dashboard-secondary-stack">
+                  {selectedResult.standardized_labels ? (
+                    <div className="detail-scroll-shell">
+                      <div className="min-w-[960px]">
+                        <LabelsOverviewCard labels={selectedResult.standardized_labels} />
+                      </div>
+                    </div>
+                  ) : null}
+                  {hasMultipleResults ? (
+                    <div className="detail-scroll-shell">
+                      <div className="min-w-[960px]">
+                        <SegmentDistributionCard results={analysisResults} />
+                      </div>
+                    </div>
+                  ) : null}
+                </section>
+              ) : null}
+            </div>
+          </div>
+        </section>
+
+        {!compactChatMode ? (
+          <div
+            id="resize-handle"
+            className={`dashboard-resize-rail ${isResizingChat ? 'is-active' : ''} ${desktopChatCollapsed ? 'dashboard-resize-rail--collapsed' : ''}`}
+            onMouseDown={() => {
+              if (!desktopChatCollapsed) setIsResizingChat(true);
+            }}
+            aria-hidden="true"
+          >
+            <div className="dashboard-resize-handle"></div>
+          </div>
+        ) : null}
+
+        <div
+          className={`dashboard-chat-backdrop ${compactChatMode && floatingChatOpen ? 'is-open' : ''}`}
+          onClick={handleCloseFloatingChat}
+        />
+
+        <aside
+          id="chat-panel"
+          className={
+            compactChatMode
+              ? `dashboard-chat-sheet ${floatingChatOpen ? 'is-open' : ''}`
+              : `dashboard-chat-column ${desktopChatCollapsed ? 'dashboard-chat-column--collapsed' : ''}`
+          }
+          style={
+            compactChatMode
+              ? undefined
+              : { width: desktopChatCollapsed ? DESKTOP_COLLAPSED_CHAT_WIDTH : chatPanelWidth }
+          }
+        >
+          <ChatPanel
+            layoutMode={compactChatMode ? 'sheet' : 'dock'}
+            collapsed={!compactChatMode && desktopChatCollapsed}
+            onToggleCollapse={!compactChatMode ? handleToggleDesktopChat : null}
+            onRequestClose={compactChatMode ? handleCloseFloatingChat : null}
+            onProfileReady={onChatProfileReady}
+            onProfilesPending={onChatProfilesPending}
+            onTraceReady={onChatTraceReady}
+            onJumpToTab={(tabId, targetUid) => {
+              setActiveTab(tabId);
+              if (targetUid) {
+                const idx = analysisResults.findIndex((r) => r && r.uid === targetUid);
+                if (idx >= 0) setSelectedResultIndex(idx);
+              }
+            }}
+          />
+        </aside>
+
+        {compactChatMode ? (
+          <button
+            type="button"
+            onClick={handleOpenFloatingChat}
+            className="dashboard-chat-launcher inline-flex items-center gap-2 rounded-full bg-blue-600 px-4 py-3 text-sm font-semibold text-white"
+          >
+            <Bot className="h-4 w-4" />
+            自然语言助手
+          </button>
+        ) : null}
       </main>
     </div>
   );

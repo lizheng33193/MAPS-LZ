@@ -81,8 +81,8 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     <script src="https://unpkg.com/lucide-react@0.292.0/dist/umd/lucide-react.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 </head>
-<body class="bg-slate-50">
-    <div id="root"></div>
+<body class="h-screen overflow-hidden bg-[#F4F7F9] font-sans text-slate-800">
+    <div id="root" class="h-full"></div>
     <script type="text/babel" data-presets="env,react">
 {bundle}
     </script>
