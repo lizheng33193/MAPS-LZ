@@ -25,7 +25,7 @@
 - 🔲 未来新增（当前不存在）
 
 ```
-agent-user-profile/
+MAPS-LZ/
 ├── app/
 │   ├── main.py                          ✅ FastAPI 入口（53 行）
 │   ├── api/

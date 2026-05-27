@@ -953,12 +953,12 @@ if ([float]$drift -gt 2.0) {
     Write-Warning "drift=$drift ∈ (1.0, 2.0]：Judge 偏移，建议 commit 后立即调 rubric 措辞"
 }
 
-# v3.1 补：push 前必须校验 remote 指向、避免误推 origin（用户 user memory 规则最高优先级）
-git remote -v | Select-String 'github\s+https://github.com/v-yimingliu_microsoft/agent-user-profile'
-if ($LASTEXITCODE -ne 0) { Write-Error 'github remote 未指向 v-yimingliu_microsoft/agent-user-profile，中止 push'; exit 1 }
+# v3.1 补：push 前必须校验 remote 指向、避免误推到错误仓库
+git remote -v | Select-String 'origin\s+.*lizheng33193/MAPS-LZ'
+if ($LASTEXITCODE -ne 0) { Write-Error 'origin 未指向 lizheng33193/MAPS-LZ，中止 push'; exit 1 }
 
 git commit --allow-empty -m "[complete] plan-09 — eval system with rubric + ci"
-git push github main
+git push origin main
 ```
 
 ---

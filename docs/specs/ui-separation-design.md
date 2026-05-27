@@ -330,5 +330,5 @@ GET / 路由实现：按当前所处步骤（1/2/3）切换
 - **Step 3**：架构 Stub（创建空目录 + 占位 index.html / app.jsx，验证 StaticFiles 挂载与 FileResponse 路径解析）+ 更新 PLANNING.md（`app/static/` 目录登记）+ 更新 TASK.md（移除"待前端分离"开发中发现条目）
 - **Step 4**：Plan（每个组件的 props 接口、决策 4 子选项 i/ii 选定、TDD 顺序、三步内的具体 Task 拆分）
 - **Step 5**：TDD 实现（第一步 → 第二步 → 第三步，每一步独立 commit）
-- **Step 7**：交付（合入 main + 推送到 github remote）
+- **Step 7**：交付（合入 main + 推送到当前批准仓库对应的 remote）
 - **Step 8**：白盒审计（确认 className / chart title / API 契约无意外改动）

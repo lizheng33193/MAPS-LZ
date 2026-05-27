@@ -1057,11 +1057,11 @@ git commit -m "feat(08): phase 4 sidecar wrapper + kill switch + multi-country s
 
 ### Task 4.8 [complete] marker + push
 ```powershell
-git remote -v | findstr github   # 必须先验证 github remote 指向 v-yimingliu_microsoft/agent-user-profile
+git remote -v | findstr origin   # 必须先验证 origin 指向 lizheng33193/MAPS-LZ（或当前批准仓库）
 git commit --allow-empty -m "[complete] plan-08 — sql judge as sidecar wrapper"
-git push github main
+git push origin main
 ```
-> 用户偏好（最高优先级）：仅推 `github` remote，**绝不推 `origin`**。
+> 用户偏好（最高优先级）：仅推当前批准仓库对应的 remote；当前仓库默认使用 `origin`。
 
 ---
 

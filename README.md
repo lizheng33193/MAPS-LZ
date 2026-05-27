@@ -92,7 +92,7 @@
 ## 2. 目录结构
 
 ```text
-agent-user-profile-fork/
+MAPS-LZ/
 ├─ app/
 │  ├─ api/                         # FastAPI 路由
 │  ├─ core/                        # 配置、日志、模型客户端

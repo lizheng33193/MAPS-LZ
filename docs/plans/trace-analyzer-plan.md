@@ -1871,7 +1871,7 @@ git commit -m "[complete] trace-analyzer-plan: event trace deep analysis"
 - 前端 UI 实现（前端只消费 API）
 - 修改 behavior_profile / ops_advice 任何文件（前置硬约束 #2 + design §10 Out-of-Scope）
 - trace 的 churn_root_cause 回灌 ops_advice（design §10）
-- push 到 github remote（CLAUDE.md：等 user 明确要求）
+- push 到当前批准仓库对应的 remote（等 user 明确要求）
 
 ---
 

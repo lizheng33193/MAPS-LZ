@@ -1330,7 +1330,7 @@ python -m pytest tests/ -v 2>&1 | Select-String "passed|failed" | Select-Object 
 ### Task 5.6 [complete] commit + push
 ```powershell
 git commit --allow-empty -m "[complete] plan-10 — memory system with 4-level compression + flush"
-git push github main
+git push origin main
 ```
 
 ---

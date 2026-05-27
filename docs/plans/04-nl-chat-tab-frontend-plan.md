@@ -7,7 +7,7 @@
 | 上游强依赖 | Plan #01 / #02 / #03 全部 `[complete]`（#01 a949830、#02 874c305、#03 8fb3377）✅ |
 | Phase 数 | 4（Phase 0/1/2/3）；Phase 0 默认 0 commit，Phase 1/2/3 各 1 commit |
 | Commit 策略 | 每 Phase 1 个 commit；commit 前必须先 `git diff --stat` 给用户确认；Phase 3 commit 带 `[complete] nl-chat-tab` |
-| Push 策略 | 仅允许 `git push github main`；禁止 push `origin` |
+| Push 策略 | 仅允许推送到当前批准仓库对应的 remote；当前默认使用 `origin` |
 | 测试基线 | `tests/` 与 `data_acquisition_agent/tests/` 以执行当日实际结果为准（Plan 内命令已要求双侧回归） |
 | 执行模式 | 单人串行，RED → GREEN → 回归 → diff 审核 → commit |
 
@@ -84,7 +84,7 @@ R5.4 已修正以上问题：统一版本标识、改为“执行当日实际基
 **验证命令**：
 
 ```powershell
-cd C:\Users\v-yimingliu\agent-userprofile\agent-user-profile
+cd C:\Users\v-yimingliu\agent-userprofile\MAPS-LZ
 git log --oneline | Select-String "\[complete\] orchestrator-agent"
 ```
 
@@ -1196,7 +1196,7 @@ git diff --stat
 git add app/static/js/app.jsx app/static/js/components/ app/static/js/services/api.js app/ui/build_frontend.py tests/frontend/ docs/reviews/nl-chat-manual-test.md docs/plans/04-nl-chat-tab-frontend-plan.md docs/reviews/04-nl-chat-tab-plan-audit.md
 git commit -m "feat(plan-04): Phase 3 URL restore + [complete] nl-chat-tab"
 git remote -v
-git push github main
+git push origin main
 git log origin/main..HEAD
 ```
 
@@ -1212,7 +1212,7 @@ git log origin/main..HEAD
 4. `tests/` 全量通过；`data_acquisition_agent/tests/` 全量通过。
 5. 浏览器 `/` 仍打开 HomeView；`/?tab=chat` 与 `/?session=<uuid>` 可直接进入 DashboardView 的 chat tab。
 6. 完成对话后 URL 包含 `tab=chat&session=<uuid>`，刷新可恢复历史。
-7. `git push github main` 成功，未 push `origin`。
+7. `git push origin main` 成功，并确认其指向当前批准仓库。
 
 ---
 
