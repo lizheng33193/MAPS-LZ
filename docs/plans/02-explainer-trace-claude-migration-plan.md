@@ -143,7 +143,7 @@ L93: def _classify_model_error(self, exc: Exception) -> str:
 ### Task 0.1 — 验证 Plan #01 已 `[complete]`
 
 ```powershell
-cd C:\Users\v-yimingliu\agent-userprofile\agent-user-profile
+cd C:\Users\v-yimingliu\agent-userprofile\MAPS-LZ
 git log --oneline | Select-String "complete.*model-client-refactor"
 ```
 
@@ -637,7 +637,7 @@ git status
 # `git status` 里 Changes not staged for commit 应为空；Untracked 列表不应被带入。
 # 确认后才 commit。
 git commit -m "feat(llm): config.yaml llm.providers/routes (8 routes incl behavior.timeline) + ModelClient route_key + 8 explainer wiring + claude_maestro stub awaits Spike"
-git push github main
+git push origin main
 git log -1 --oneline
 ```
 
@@ -998,7 +998,7 @@ git status
 # diff stat 应为准确 2 个文件。
 # `git status` 里 Changes not staged for commit 应为空。
 git commit -m "feat(claude): JSON repair tooling shared with Gemini + Claude tool_use parsing"
-git push github main
+git push origin main
 git log -1 --oneline
 ```
 
@@ -1232,7 +1232,7 @@ git diff --cached --stat
 git status
 # diff stat 应为准确 1 个文件。
 git commit -m "test: explainer fallback chain verified [complete] explainer-trace-claude"
-git push github main
+git push origin main
 git log -1 --oneline
 ```
 
@@ -1244,7 +1244,7 @@ git log -1 --oneline
 git add TASK.md
 git diff --cached --stat
 git commit -m "chore: mark plan-02 [complete] in TASK.md"
-git push github main
+git push origin main
 git log -3 --oneline
 ```
 

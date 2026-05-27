@@ -1735,9 +1735,9 @@ git commit -m "feat(07): phase 4 assembler integration + budget monitor (redact+
 ### Task 4.8 [complete] commit + push
 ```powershell
 git commit --allow-empty -m "[complete] plan-07 — knowledge base (INDEX+BM25+learned, redact+TOKEN_LIMIT preserved)"
-git push github main
+git push origin main
 ```
-**前置**：Phase 4 Task 4.7 全部绿；用户已显式确认推送（默认 origin 严禁，github remote 自动推送）。
+**前置**：Phase 4 Task 4.7 全部绿；用户已显式确认推送，并已核对当前 remote 指向批准仓库。
 
 ---
 

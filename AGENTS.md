@@ -85,8 +85,8 @@
 - 未经用户明确要求，不提交、不推送、不 reset、不 rebase、不 stage。
 - 禁止在未获明确批准时运行 `git reset --hard` 或 `git checkout --`。
 - 用户要求 push 时，先运行 `git remote -v`。
-- 只在用户明确要求时推送到本项目批准的 `github` remote，且应指向 `v-yimingliu_microsoft/agent-user-profile`。
-- 不推送到 `origin`，除非用户明确覆盖此项目规则。
+- 只在用户明确要求时推送到本项目当前批准的 GitHub 仓库；当前批准目标为 `lizheng33193/MAPS-LZ`。
+- 当本地仅配置 `origin` 且其指向 `lizheng33193/MAPS-LZ` 时，可按用户要求正常 push / 创建 PR；若远端指向其他仓库，先停下并向用户确认。
 - 不回滚无关的脏工作区改动。
 
 ## 文档更新

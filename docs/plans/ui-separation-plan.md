@@ -15,7 +15,7 @@
 4. **不安装依赖**：requirements.txt 不改；不创建 package.json
 5. **CDN 版本锁定**：React 18.2.0 / ReactDOM 18.2.0 / lucide-react 0.292.0 / @babel/standalone / cdn.tailwindcss.com 与 live_frontend.py 一致
 6. **每个 Phase 完成后 commit**（高风险检查点如 main.py 路由切换可单独 commit）；单个 Task 不强制 commit
-7. **push 前 git remote -v**；只允许 `git push github main`
+7. **push 前 git remote -v**；只允许推送到当前批准仓库对应的 remote（当前默认 `origin`）
 8. **找不到方法 / 看到歧义 → 停下问用户**
 9. **允许修改 `app/main.py`**，仅限前端入口路由和 StaticFiles/FileResponse 相关逻辑；不得修改 API 路由和业务服务
 10. **代码块中禁止使用 `...` 占位符**：如果 import 清单无法确定，写“按实际引用补齐”，不得在最终代码中保留 `...`
@@ -751,11 +751,11 @@ Step-1 完成后整体 push（git remote -v 确认）：
 
 ```bash
 git remote -v
-# 必须看到 github → v-yimingliu_microsoft/agent-user-profile
-git push github main
+# 必须看到 origin → lizheng33193/MAPS-LZ（或其他已确认指向当前项目的 GitHub remote）
+git push origin main
 ```
 
-**Phase 级 push 策略**：每完成一个 Phase（如 Phase B 全部 4 个 Task commit 后），可选执行 `git push github main` 作为进度保存点，避免中间断开对话导致本地 commit 丢失风险。
+**Phase 级 push 策略**：每完成一个 Phase（如 Phase B 全部 4 个 Task commit 后），可选执行 `git push origin main` 作为进度保存点，避免中间断开对话导致本地 commit 丢失风险。
 
 **Step-1 退出条件**：
 - Phase A PoC 已验证并清理（工作区回到 stub 状态）
@@ -815,7 +815,7 @@ curl -s "http://localhost:8000/?legacy=1" | grep -c "react.development.js"
 
 **变更摘要**：`refactor(ui): switch GET / default to new app/static/ frontend`
 
-**push**：`git push github main`
+**push**：`git push origin main`
 
 **Step-2 退出条件**：
 - 默认访问拿到新版
@@ -874,7 +874,7 @@ python -m pytest tests/ -v 2>&1 | tail -3
 
 **变更摘要**：`refactor(ui): remove legacy live_frontend.py [P4 complete]`
 
-**push**：`git push github main`
+**push**：`git push origin main`
 
 **Step-3 退出条件**：
 - `app/ui/live_frontend.py` 不存在
