@@ -7,7 +7,7 @@ function ModuleStatusPanel({ state, onRetry, children }) {
 
   if (status === 'loading') {
     return (
-      <div className="h-full min-h-[500px] flex flex-col items-center justify-center text-center">
+      <div className="h-full min-h-[360px] flex flex-col items-center justify-center text-center">
         <div className="sr-only">模块分析骨架屏</div>
         <div className="w-12 h-12 border-4 border-blue-200 border-t-blue-500 rounded-full animate-spin mb-4" />
         <div className="text-lg font-semibold text-slate-800">正在分析该模块</div>
@@ -31,7 +31,7 @@ function ModuleStatusPanel({ state, onRetry, children }) {
   }
   if (status === 'error') {
     return (
-      <div className="h-full min-h-[500px] flex flex-col items-center justify-center text-center">
+      <div className="h-full min-h-[360px] flex flex-col items-center justify-center text-center">
         <div className="w-full max-w-2xl rounded-2xl border border-red-200 bg-red-50 px-5 py-5 text-red-700">
           <div className="font-semibold text-lg mb-2">该子页面分析失败</div>
           <div className="text-sm break-words">{error || '未知错误'}</div>
@@ -44,7 +44,7 @@ function ModuleStatusPanel({ state, onRetry, children }) {
   }
   if (status === 'idle') {
     return (
-      <div className="h-full min-h-[500px] flex flex-col items-center justify-center text-center">
+      <div className="h-full min-h-[360px] flex flex-col items-center justify-center text-center">
         <div className="text-lg font-semibold text-slate-800">该子页面尚未分析</div>
         <div className="text-sm text-slate-500 mt-2">请点击重试触发该模块分析。</div>
         <button onClick={onRetry} className="mt-4 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm">

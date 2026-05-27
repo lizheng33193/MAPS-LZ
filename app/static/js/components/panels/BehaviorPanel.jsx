@@ -152,7 +152,7 @@ function BehaviorPanel({ profile }) {
             <span className="inline-flex items-center rounded-full bg-blue-600 px-4 py-1.5 text-xs font-bold uppercase tracking-wider text-white">
               全链路行为画像
             </span>
-            <span className="text-2xl font-bold text-slate-800">UID {profileUid}</span>
+            <span className="text-[28px] font-bold text-slate-800">UID {profileUid}</span>
             <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-600 border border-emerald-200">
               <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
                 AI 置信度: {confidenceLabel}
@@ -184,19 +184,19 @@ function BehaviorPanel({ profile }) {
         <div className="flex gap-6">
           <div className="text-right">
             <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">页面节点</div>
-            <div className="mt-1 text-2xl font-bold text-slate-700">{timelineSectionCount}</div>
+            <div className="mt-1 text-[28px] font-bold text-slate-700">{timelineSectionCount}</div>
           </div>
           <div className="text-right">
             <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">原始动作</div>
-            <div className="mt-1 text-2xl font-bold text-slate-700">{totalEvents}</div>
+            <div className="mt-1 text-[28px] font-bold text-slate-700">{totalEvents}</div>
           </div>
           <div className="text-right">
             <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">压缩动作</div>
-            <div className="mt-1 text-2xl font-bold text-blue-600">{compactEvents}</div>
+            <div className="mt-1 text-[28px] font-bold text-blue-600">{compactEvents}</div>
           </div>
           <div className="text-right">
             <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">警示/异常</div>
-            <div className="mt-1 text-2xl font-bold text-red-500">{warningSections}</div>
+            <div className="mt-1 text-[28px] font-bold text-red-500">{warningSections}</div>
           </div>
         </div>
       </header>
@@ -205,7 +205,7 @@ function BehaviorPanel({ profile }) {
         <article className="flex flex-col rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
           <div className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-4">还款意愿</div>
           <div className="flex items-baseline gap-3">
-            <span className="text-3xl font-bold text-slate-800">
+            <span className="text-[28px] font-bold text-slate-800">
               {stringValue(objectValue(llmProfile.repayment_willingness).label, '未知')}
             </span>
             <span className="text-sm font-medium text-amber-500">
@@ -251,7 +251,7 @@ function BehaviorPanel({ profile }) {
         <article className="flex flex-col rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm relative overflow-hidden">
           <div className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-4">流失风险</div>
           <div className="flex items-baseline gap-3">
-            <span className={`text-3xl font-bold ${
+            <span className={`text-[28px] font-bold ${
               stringValue(objectValue(llmProfile.churn_risk).level, '未知') === '高'
                 ? 'text-red-600'
                 : 'text-emerald-600'
@@ -450,7 +450,7 @@ function BehaviorPanel({ profile }) {
                               <span className="rounded-full bg-red-50 px-2.5 py-1 text-[11px] font-bold text-red-600 border border-red-200">异常卡点</span>
                             )}
                           </div>
-                          <div className="mt-2 text-2xl font-bold tracking-tight text-slate-800 break-words">
+                          <div className="mt-2 text-[28px] font-bold tracking-tight text-slate-800 break-words">
                             {stringValue(event?.action, '未命名动作')}
                           </div>
                           {stringValue(event?.note, '') && (

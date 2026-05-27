@@ -1,4 +1,4 @@
-# Plan #04 — NL Chat Tab Frontend (R5.5 Reviewed)
+# Plan #04 — NL Chat Workspace Frontend (R5.6 Layout Refresh)
 
 | 项 | 值 |
 |---|---|
@@ -41,12 +41,25 @@ R5.4 已修正以上问题：统一版本标识、改为“执行当日实际基
 
 ## Scope
 
+### 2026-05-27 布局更新说明
+
+本计划的 SSE、session restore、ACK、memory API 契约保持不变，但页面承载方式已升级为：
+- 左侧 7 个画像模块卡片 + 详情区
+- 右侧常驻 NL Chat dock
+- 窄屏自动折叠为 launcher / sheet
+- `MemoryInspector` 从内嵌块改为聊天头部触发的大抽屉
+- `?tab=chat` 改为“打开/聚焦右侧聊天区”，不再代表左侧第 8 个 tab
+- 工作区外层视觉高保真参照 `/Users/zhengli/Desktop/html.html`：全宽顶部栏、默认白底模块卡片、激活彩色态、右侧整列聊天列、细分隔条与窄拖拽柄
+- 2026-05-27 壳层修正追加要求：桌面端不接受“近似实现”，必须直接对齐 `html.html` 的根容器、独立滚动、标题字号、卡片尺寸与聊天列全高贴边效果；浏览器文档本身不得成为主滚动容器
+
+以下旧表述如“第 8 个 tab / 高亮 chat tab”，均应按上述新布局理解。
+
 **本 Plan 做：**
-1. 在现有 Dashboard 第 8 个 tab 追加 `chat`，实现自然语言多轮对话面板。
+1. 在现有 Dashboard 保留 7 个左侧模块，并实现右侧常驻自然语言多轮对话面板。
 2. 前端仅使用当前架构：React 18 + Babel Standalone + `window.AppComponents` / `window.AppServices.api`。
 3. 新增 `app/static/js/components/panels/chat/` 下的 7 个 chat 组件和 1 个 reducer 文件。
 4. 消费 Plan #03 提供的 SSE session API：`session_started / tool_started / tool_completed / assistant_thinking / awaiting_user_ack / budget_warning / provider_fallback / error / final / done`。
-5. 补 URL 路由：`?tab=chat` 初始打开 chat tab，`?session=<uuid>` 刷新恢复历史。
+5. 补 URL 路由：`?tab=chat` 初始打开或聚焦右侧聊天区，`?session=<uuid>` 刷新恢复历史。
 6. 新增 Python 静态/动态测试和手测文档。
 
 **本 Plan 不做：**

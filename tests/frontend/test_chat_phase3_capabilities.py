@@ -63,6 +63,34 @@ def test_memory_inspector_wires_management_api() -> None:
     assert "MemoryInspector" in panel_src
 
 
+def test_chat_panel_uses_memory_drawer_instead_of_inline_block() -> None:
+    panel_src = CHAT_PANEL.read_text(encoding="utf-8")
+    inspector_src = MEMORY_INSPECTOR.read_text(encoding="utf-8")
+
+    assert "memoryOpen" in panel_src
+    assert "setMemoryOpen" in panel_src
+    assert "onOpenMemory" in panel_src
+    assert "collapsed = false" in panel_src
+    assert "onToggleCollapse" in panel_src
+    assert 'id="chat-panel-header"' in panel_src
+    assert 'id="chat-panel-body"' in panel_src
+    assert 'id="chat-panel-footer"' in panel_src
+    assert 'id="chat-container"' in panel_src
+    assert 'id="collapse-chat-btn"' in panel_src
+    assert 'id="chat-history-btn"' in panel_src
+    assert "chatStatusText" not in panel_src
+    assert "等待提问" not in panel_src
+    assert 'text-[11px]' not in panel_src
+    assert 'text-[10px]' in panel_src
+    assert '<MemoryInspector open={memoryOpen}' in panel_src or '<MemoryInspector\n' in panel_src
+    assert "function MemoryInspector({ open, onClose" in inspector_src
+    assert "fixed inset-0" in inspector_src
+    assert "createPortal" in inspector_src
+    assert "document.body" in inspector_src
+    assert "历史记忆" in inspector_src
+    assert "onClose" in inspector_src
+
+
 def test_chat_panel_wires_profile_progress_and_safe_success_copy() -> None:
     src = CHAT_PANEL.read_text(encoding="utf-8")
     assert "tool_progress" in (REPO / "app" / "static" / "js" / "components" / "panels" / "chat" / "chatReducer.js").read_text(encoding="utf-8")
@@ -105,3 +133,31 @@ def test_dashboard_loading_states_use_skeleton_progress() -> None:
     assert "loading-progress-bar" in dashboard_src
     assert "模块分析骨架屏" in module_status_src
     assert "skeleton-shimmer" in module_status_src
+
+
+def test_dashboard_uses_split_workspace_with_persistent_chat() -> None:
+    dashboard_src = DASHBOARD.read_text(encoding="utf-8")
+
+    assert 'id="workspace"' in dashboard_src
+    assert 'id="left-panel"' in dashboard_src
+    assert "dashboard-chat-column" in dashboard_src
+    assert "dashboard-resize-rail" in dashboard_src
+    assert "dashboard-resize-handle" in dashboard_src
+    assert "dashboard-module-card" in dashboard_src
+    assert "dashboard-module-card--active" in dashboard_src
+    assert "module-grid-shell" in dashboard_src
+    assert "detail-scroll-shell" in dashboard_src
+    assert "h-14 shrink-0" in dashboard_src
+    assert "minWidth: 800" not in dashboard_src
+    assert "setFloatingChatOpen" in dashboard_src
+    assert "desktopChatCollapsed" in dashboard_src
+    assert "max-w-[1500px]" not in dashboard_src
+    assert "display: activeTab === 'chat'" not in dashboard_src
+
+
+def test_chat_message_list_uses_larger_readable_chat_typography() -> None:
+    src = (REPO / "app" / "static" / "js" / "components" / "panels" / "chat" / "ChatMessageList.jsx").read_text(encoding="utf-8")
+
+    assert "text-[14px]" in src
+    assert "leading-7" in src
+    assert "text-[13px]" not in src

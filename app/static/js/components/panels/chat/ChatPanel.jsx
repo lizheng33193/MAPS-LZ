@@ -10,6 +10,7 @@ const {
   chatInitialState,
 } = window.AppComponents;
 const { createOrchestratorSession, sendOrchestratorMessage, openOrchestratorStream, ackOrchestratorTool, fetchOrchestratorSession } = window.AppServices.api;
+const { Bot, Clock3, PanelRightClose, X } = window.LucideReact || {};
 const { useReducer, useState, useRef, useEffect, useCallback } = React;
 
 const PROFILE_MODULE_ORDER = ['app', 'behavior', 'credit', 'comprehensive', 'product', 'ops'];
@@ -22,10 +23,11 @@ const PROFILE_MODULE_LABELS = {
   ops: '运营策略',
 };
 
-function ChatPanel({ onProfileReady, onProfilesPending, onTraceReady, onJumpToTab }) {
+function ChatPanel({ layoutMode = 'dock', collapsed = false, onRequestClose, onToggleCollapse, onProfileReady, onProfilesPending, onTraceReady, onJumpToTab }) {
   const [state, dispatch] = useReducer(chatReducer, chatInitialState);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
+  const [memoryOpen, setMemoryOpen] = useState(false);
   const [ingestedUids, setIngestedUids] = useState([]);
   const [traceUids, setTraceUids] = useState([]);
   const [profileModulesByUid, setProfileModulesByUid] = useState({});
@@ -84,8 +86,6 @@ function ChatPanel({ onProfileReady, onProfilesPending, onTraceReady, onJumpToTa
     if (cb) cb({ uid: row.uid, module: row.module, payload: row.result });
   }
 
-  // 2026-05-04 方案 A v3：tool_started 时立即把 (uids × modules) 全置 loading，
-  // 让上面 6 个 Tab 卡片立即显示"分析中..."动画，避免 chat 跑大批量时 UI 像卡死。
   useEffect(() => {
     state.toolCalls.forEach((t) => {
       if (t.tool_name !== 'run_profile') return;
@@ -103,8 +103,6 @@ function ChatPanel({ onProfileReady, onProfilesPending, onTraceReady, onJumpToTa
     });
   }, [state.toolCalls]);
 
-  // run_profile 在工具运行中会推送模块级 tool_progress；
-  // 这里即时把已完成模块写回 Dashboard，最终 tool_completed 再做补漏。
   useEffect(() => {
     state.toolCalls.forEach((t) => {
       if (t.tool_name !== 'run_profile') return;
@@ -131,9 +129,6 @@ function ChatPanel({ onProfileReady, onProfilesPending, onTraceReady, onJumpToTa
     });
   }, [state.toolCalls]);
 
-  // 2026-05-04 方案 A：把 tool_completed 的画像/trace 结构化结果上报给 app.jsx。
-  // 用 useEffect 而非 onEvent 拦截，可同时拿到 reducer 已保存的 tool_started.input
-  // （run_trace 的 uid 来自这里），并用 ref-Set 跨 StrictMode 双调用做幂等。
   useEffect(() => {
     state.toolCalls.forEach((t) => {
       if (t.status !== 'ok' || !t.output) return;
@@ -160,8 +155,6 @@ function ChatPanel({ onProfileReady, onProfilesPending, onTraceReady, onJumpToTa
     const es = openOrchestratorStream(sessionId, {
       onEvent: (evt) => dispatch(evt),
       onError: (err) => {
-        // 2026-05-05 修复：EventSource 错误事件是 DOM Event，没有 .message 字段，
-        // 过去 String(Event) 得 "[object Event]" 是无用提示。给出友好提示。
         const msg = (err && err.message)
           ? String(err.message)
           : 'SSE 连接中断（可能是服务器重启或网络抖动）。请重新发送问题。';
@@ -191,14 +184,12 @@ function ChatPanel({ onProfileReady, onProfilesPending, onTraceReady, onJumpToTa
       });
     }).catch((err) => {
       if (cancelled) return;
-      // 2026-05-04 hotfix：服务器重启后旧 session 已失效（404），静默清掉过期 URL 参数，
-      // 不再向用户展示红色错误条，让用户直接进入空白对话状态。
       const msg = String((err && err.message) || err);
       const is404 = msg.includes('404');
       if (is404) {
-        const params = new URLSearchParams(window.location.search);
-        params.delete('session');
-        const next = `${window.location.pathname}${params.toString() ? '?' + params.toString() : ''}${window.location.hash}`;
+        const currentParams = new URLSearchParams(window.location.search);
+        currentParams.delete('session');
+        const next = `${window.location.pathname}${currentParams.toString() ? '?' + currentParams.toString() : ''}${window.location.hash}`;
         window.history.replaceState({}, '', next);
       } else {
         dispatch({ type: 'error', error_type: 'restore', message: msg });
@@ -217,7 +208,6 @@ function ChatPanel({ onProfileReady, onProfilesPending, onTraceReady, onJumpToTa
     }
   }, [state.sessionId]);
 
-  // 2026-05-04 方案 A v3：每秒 tick，让运行中的 run_profile 显示已用时间。
   useEffect(() => {
     const hasPending = state.toolCalls.some((t) => t.status === 'pending');
     if (!hasPending) return;
@@ -283,6 +273,10 @@ function ChatPanel({ onProfileReady, onProfilesPending, onTraceReady, onJumpToTa
     if (esRef.current) esRef.current.close();
   }, []);
 
+  function onOpenMemory() {
+    setMemoryOpen(true);
+  }
+
   const jumpUids = ingestedUids.length > 0 ? ingestedUids : traceUids;
   const selectedDashboardUid = jumpUids.includes(selectedJumpUid) ? selectedJumpUid : jumpUids[0];
   const canJumpTrace = selectedDashboardUid ? traceUids.includes(selectedDashboardUid) : false;
@@ -297,100 +291,180 @@ function ChatPanel({ onProfileReady, onProfilesPending, onTraceReady, onJumpToTa
         ...(canJumpTrace ? [{ id: 'trace', label: '深度行为解析' }] : []),
       ]
     : [{ id: 'trace', label: '深度行为解析' }];
+  const isCollapsedDock = layoutMode === 'dock' && collapsed;
+
+  if (isCollapsedDock) {
+    return (
+      <div className="flex h-full flex-col bg-transparent">
+        <header id="chat-panel-header" className="h-full bg-transparent">
+          <div id="chat-panel-header-inner" className="flex h-full flex-col items-center justify-start gap-3 px-0 py-4">
+            <button
+              id="chat-launcher"
+              type="button"
+              onClick={onToggleCollapse}
+              className="flex h-[52px] w-[52px] items-center justify-center rounded-full bg-blue-600 text-white shadow-[0_12px_24px_rgba(37,99,235,0.25)] transition-colors hover:bg-blue-700"
+              title="展开 NL Chat"
+            >
+              {Bot ? <Bot className="h-5 w-5" /> : null}
+            </button>
+          </div>
+        </header>
+        <MemoryInspector open={memoryOpen} onClose={() => setMemoryOpen(false)} />
+      </div>
+    );
+  }
 
   return (
-    <section className="flex flex-col gap-4 min-h-[520px]">
-      <div>
-        <h2 className="text-xl font-bold text-slate-800">自然语言对话</h2>
-        <p className="text-sm text-slate-500">NL Chat</p>
-      </div>
-      <ChatBudgetBanner used={state.budget && state.budget.used} limit={state.budget && state.budget.limit} />
-      <ChatProviderFallbackBanner from={state.providerFallback && state.providerFallback.from} to={state.providerFallback && state.providerFallback.to} reason={state.providerFallback && state.providerFallback.reason} />
-      <MemoryInspector />
-      {state.error ? <div className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{state.error.error_type}: {state.error.message}</div> : null}
-      <div className="flex-1 rounded-xl border border-slate-200 bg-slate-50 p-4 overflow-y-auto">
-        <ChatMessageList messages={state.messages} />
-        <ChatToolCallStream toolCalls={state.toolCalls} now={now} />
-        {streaming && !state.pendingAck ? (() => {
-          // 2026-05-04 方案 A v3：显示精细进度 — 当 run_profile 跑批时，按 (uids × modules)
-          // 算分母，已完成 (status='ok' 的 sub-result) 算分子；估算每个子任务 ~40s。
-          const pendingProfile = state.toolCalls.find((t) => t.tool_name === 'run_profile' && t.status === 'pending');
-          let label = 'AI 正在思考，可能需要 30~60 秒…';
-          let elapsedSec = 0;
-          let etaSec = null;
-          if (pendingProfile) {
-            const inp = pendingProfile.input || {};
-            const totalUids = (Array.isArray(inp.uids) ? inp.uids : []).length || 1;
-            const totalModules = (Array.isArray(inp.modules) ? inp.modules : ['app']).length;
-            const totalTasks = totalUids * totalModules;
-            elapsedSec = Math.max(0, Math.floor((now - (pendingProfile.startedAtMs || now)) / 1000));
-            etaSec = Math.max(0, totalTasks * 40 - elapsedSec); // 40s/任务 经验值
-            const fmt = (s) => `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;
-            label = `画像分析进行中 · ${totalUids} 位用户 × ${totalModules} 个模块（共 ${totalTasks} 个子任务）· 已用 ${fmt(elapsedSec)} / 预计还需 ~${fmt(etaSec)}`;
-          }
-          return (
-            <div className="mt-4 flex items-center gap-2 text-sm text-slate-600">
-              <span className="inline-block h-2 w-2 animate-bounce rounded-full bg-blue-400" style={{ animationDelay: '0ms' }}></span>
-              <span className="inline-block h-2 w-2 animate-bounce rounded-full bg-blue-400" style={{ animationDelay: '150ms' }}></span>
-              <span className="inline-block h-2 w-2 animate-bounce rounded-full bg-blue-400" style={{ animationDelay: '300ms' }}></span>
-              <span className="ml-1">{label}</span>
-            </div>
-          );
-        })() : null}
-      </div>
-      <ChatAckCard pending={state.pendingAck} onApprove={onApprove} onReject={onReject} />
-      {jumpUids.length > 0 && onJumpToTab ? (
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-          <div className="text-sm font-semibold text-emerald-800">
-            {ingestedUids.length > 0
-              ? `${profileComplete ? '完整画像已生成' : '画像分析进行中'}：${selectedDashboardUid || ingestedUids.length + ' 位用户'} 已完成 ${completedModulesForUid.length}/${expectedModulesForUid.length} 个画像模块`
-              : `已生成 ${traceUids.length} 位用户的深度行为解析，可查看 trace dashboard：`}
-          </div>
-          {ingestedUids.length > 0 ? (
-            <div className="mt-1 text-xs text-emerald-700">
-              模块完成后会立即出现在下方，可先查看已完成模块；最终完成后再展示完整画像。
-            </div>
-          ) : null}
-          {jumpUids.length > 1 ? (
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <span className="text-xs text-emerald-700">目标 UID：</span>
-              {jumpUids.map((u) => {
-                const active = selectedDashboardUid === u;
-                return (
-                  <button
-                    key={u}
-                    onClick={() => setSelectedJumpUid(u)}
-                    className={`rounded px-2 py-1 text-xs font-mono transition-colors border ${
-                      active
-                        ? 'bg-emerald-600 text-white border-emerald-600'
-                        : 'bg-white text-emerald-700 border-emerald-300 hover:bg-emerald-100'
-                    }`}
-                  >
-                    {u}
-                  </button>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="mt-1 text-xs text-emerald-700 font-mono">{jumpUids[0]}</div>
-          )}
-          <div className="mt-2 flex flex-wrap gap-2">
-            {jumpTabs.length > 0 ? jumpTabs.map((t) => (
+    <div className="flex h-full min-h-0 flex-col bg-white/95 backdrop-blur-xl">
+      <header id="chat-panel-header" className="h-14 shrink-0 border-b border-slate-100 bg-white/85 backdrop-blur">
+        <div id="chat-panel-header-inner" className="flex h-full items-center justify-between gap-3 px-4">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
               <button
-                key={t.id}
-                onClick={() => onJumpToTab(t.id, selectedDashboardUid)}
-                className="rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 border border-emerald-300 hover:bg-emerald-100 transition-colors"
+                id="chat-launcher"
+                type="button"
+                onClick={layoutMode === 'dock' && onToggleCollapse ? onToggleCollapse : undefined}
+                className="flex h-8 w-8 items-center justify-center rounded-md bg-blue-100 text-blue-600"
+                title={layoutMode === 'dock' && onToggleCollapse ? '收起 NL Chat' : '自然语言助手'}
               >
-                {t.label} →
+                {Bot ? <Bot className="h-4 w-4" /> : null}
               </button>
-            )) : (
-              <span className="text-xs text-emerald-700">等待第一个画像模块完成...</span>
-            )}
+              <div className="min-w-0">
+                <h2 id="chat-panel-title" className="truncate text-sm font-semibold text-slate-800">自然语言助手 (NL Chat)</h2>
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              id="chat-history-btn"
+              type="button"
+              onClick={onOpenMemory}
+              className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-200"
+            >
+              {Clock3 ? <Clock3 className="h-3.5 w-3.5" /> : null}
+              历史记忆
+            </button>
+            {layoutMode === 'dock' && onToggleCollapse ? (
+              <button
+                id="collapse-chat-btn"
+                type="button"
+                onClick={onToggleCollapse}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-slate-500 transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-600"
+                title="折叠 NL Chat"
+              >
+                {PanelRightClose ? <PanelRightClose className="h-4 w-4" /> : null}
+              </button>
+            ) : null}
+            {layoutMode === 'sheet' && onRequestClose ? (
+              <button
+                type="button"
+                onClick={onRequestClose}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-slate-500 transition-colors hover:border-slate-300 hover:bg-slate-100"
+              >
+                {X ? <X className="h-4 w-4" /> : null}
+              </button>
+            ) : null}
           </div>
         </div>
-      ) : null}
-      <ChatInputBox value={input} onChange={setInput} onSend={onSend} disabled={streaming || !!state.pendingAck} />
-    </section>
+      </header>
+
+      <div id="chat-panel-body" className="flex min-h-0 flex-1 flex-col">
+        <div id="chat-container" className="flex-1 overflow-y-auto bg-slate-50/50 p-4 scroll-smooth">
+          <div className="space-y-6">
+            <ChatBudgetBanner used={state.budget && state.budget.used} limit={state.budget && state.budget.limit} />
+            <ChatProviderFallbackBanner from={state.providerFallback && state.providerFallback.from} to={state.providerFallback && state.providerFallback.to} reason={state.providerFallback && state.providerFallback.reason} />
+            {state.error ? <div className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{state.error.error_type}: {state.error.message}</div> : null}
+
+            <div className="space-y-4">
+              <ChatMessageList messages={state.messages} />
+              <ChatToolCallStream toolCalls={state.toolCalls} now={now} />
+              {streaming && !state.pendingAck ? (() => {
+                const pendingProfile = state.toolCalls.find((t) => t.tool_name === 'run_profile' && t.status === 'pending');
+                let label = 'AI 正在思考，可能需要 30~60 秒...';
+                if (pendingProfile) {
+                  const inp = pendingProfile.input || {};
+                  const totalUids = (Array.isArray(inp.uids) ? inp.uids : []).length || 1;
+                  const totalModules = (Array.isArray(inp.modules) ? inp.modules : ['app']).length;
+                  const totalTasks = totalUids * totalModules;
+                  const elapsedSec = Math.max(0, Math.floor((now - (pendingProfile.startedAtMs || now)) / 1000));
+                  const etaSec = Math.max(0, totalTasks * 40 - elapsedSec);
+                  const fmt = (value) => `${Math.floor(value / 60)}:${String(value % 60).padStart(2, '0')}`;
+                  label = `画像分析进行中 · ${totalUids} 位用户 × ${totalModules} 个模块（共 ${totalTasks} 个子任务）· 已用 ${fmt(elapsedSec)} / 预计还需 ~${fmt(etaSec)}`;
+                }
+                return (
+                  <div className="flex items-center gap-2 text-sm text-slate-600">
+                    <span className="inline-block h-2 w-2 animate-bounce rounded-full bg-blue-400" style={{ animationDelay: '0ms' }}></span>
+                    <span className="inline-block h-2 w-2 animate-bounce rounded-full bg-blue-400" style={{ animationDelay: '150ms' }}></span>
+                    <span className="inline-block h-2 w-2 animate-bounce rounded-full bg-blue-400" style={{ animationDelay: '300ms' }}></span>
+                    <span className="ml-1">{label}</span>
+                  </div>
+                );
+              })() : null}
+            </div>
+
+            <ChatAckCard pending={state.pendingAck} onApprove={onApprove} onReject={onReject} />
+
+            {jumpUids.length > 0 && onJumpToTab ? (
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                <div className="text-sm font-semibold text-emerald-800">
+                  {ingestedUids.length > 0
+                    ? `${profileComplete ? '完整画像已生成' : '画像分析进行中'}：${selectedDashboardUid || ingestedUids.length + ' 位用户'} 已完成 ${completedModulesForUid.length}/${expectedModulesForUid.length} 个画像模块`
+                    : `已生成 ${traceUids.length} 位用户的深度行为解析，可查看 trace dashboard：`}
+                </div>
+                {ingestedUids.length > 0 ? (
+                  <div className="mt-1 text-xs text-emerald-700">
+                    模块完成后会立即出现在左侧分析区，可先查看已完成模块；最终完成后再展示完整画像。
+                  </div>
+                ) : null}
+                {jumpUids.length > 1 ? (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <span className="text-xs text-emerald-700">目标 UID：</span>
+                    {jumpUids.map((u) => {
+                      const active = selectedDashboardUid === u;
+                      return (
+                        <button
+                          key={u}
+                          onClick={() => setSelectedJumpUid(u)}
+                          className={`rounded px-2 py-1 text-xs font-mono transition-colors border ${
+                            active
+                              ? 'bg-emerald-600 text-white border-emerald-600'
+                              : 'bg-white text-emerald-700 border-emerald-300 hover:bg-emerald-100'
+                          }`}
+                        >
+                          {u}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="mt-1 text-xs font-mono text-emerald-700">{jumpUids[0]}</div>
+                )}
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {jumpTabs.length > 0 ? jumpTabs.map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => onJumpToTab(t.id, selectedDashboardUid)}
+                      className="rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-100"
+                    >
+                      {t.label} →
+                    </button>
+                  )) : (
+                    <span className="text-xs text-emerald-700">等待第一个画像模块完成...</span>
+                  )}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+
+      <div id="chat-panel-footer" className="shrink-0 border-t border-slate-100 bg-white p-4">
+        <ChatInputBox value={input} onChange={setInput} onSend={onSend} disabled={streaming || !!state.pendingAck} />
+        <p className="mt-2 text-center text-[10px] text-slate-400">AI 助手可能会犯错，请结合左侧结构化结果核实。</p>
+      </div>
+
+      <MemoryInspector open={memoryOpen} onClose={() => setMemoryOpen(false)} />
+    </div>
   );
 }
 

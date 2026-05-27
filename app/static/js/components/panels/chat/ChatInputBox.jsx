@@ -1,3 +1,5 @@
+const { SendHorizontal } = window.LucideReact || {};
+
 function ChatInputBox({ value, onChange, onSend, disabled }) {
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey && !disabled) {
@@ -6,22 +8,22 @@ function ChatInputBox({ value, onChange, onSend, disabled }) {
     }
   };
   return (
-    <div className="flex gap-3">
+    <div className="relative flex items-end rounded-xl border border-slate-200 bg-slate-50 shadow-sm transition-all focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-50">
       <textarea
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={handleKeyDown}
         disabled={disabled}
-        rows={2}
-        className="flex-1 rounded-xl border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100"
-        placeholder="输入问题，Enter 发送，Shift+Enter 换行"
+        rows={1}
+        className="w-full min-h-[44px] max-h-32 resize-none bg-transparent py-3 pl-4 pr-12 text-sm outline-none disabled:cursor-not-allowed disabled:bg-slate-100/50"
+        placeholder="输入问题，Enter 发送，Shift+Enter 换行..."
       />
       <button
         onClick={onSend}
         disabled={disabled || !value.trim()}
-        className="rounded-xl bg-blue-600 px-5 py-2 text-sm font-semibold text-white disabled:bg-slate-300"
+        className="absolute bottom-1.5 right-2 inline-flex rounded-lg p-2 transition-colors disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400 enabled:bg-blue-600 enabled:text-white enabled:shadow-md enabled:hover:bg-blue-700"
       >
-        发送
+        {SendHorizontal ? <SendHorizontal className="h-4 w-4" /> : '发'}
       </button>
     </div>
   );

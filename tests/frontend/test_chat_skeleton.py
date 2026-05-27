@@ -36,9 +36,31 @@ def test_load_order_contains_chat_files_before_dashboard() -> None:
         assert bf.index(needle) < dash, f"{needle} must load before DashboardView"
 
 
-def test_dashboard_has_chat_tab_and_branch() -> None:
+def test_dashboard_has_html_reference_workspace_shell() -> None:
+    template = (REPO / "app" / "ui" / "build_frontend.py").read_text(encoding="utf-8")
     src = (REPO / "app" / "static" / "js" / "components" / "DashboardView.jsx").read_text(encoding="utf-8")
+    assert 'body class="h-screen overflow-hidden bg-[#F4F7F9] font-sans text-slate-800"' in template
+    assert '<div id="root" class="h-full"></div>' in template
     assert "ChatPanel," in src
-    assert re.search(r"id:\s*'chat'", src)
-    assert "activeTab === 'chat'" in src
+    assert not re.search(r"id:\s*'chat'", src)
+    assert 'id="workspace"' in src
+    assert 'id="left-panel"' in src
+    assert 'id="module-grid"' in src
+    assert 'id="resize-handle"' in src
+    assert "dashboard-module-card" in src
+    assert "dashboard-module-card--active" in src
+    assert "desktopChatCollapsed" in src
+    assert "flex h-screen flex-col overflow-hidden bg-[#F4F7F9] font-sans text-slate-800" in src
+    assert "max-w-5xl mx-auto w-full" in src
+    assert "module-grid-shell" in src
+    assert "detail-scroll-shell" in src
+    assert "overflow-x-auto pb-1" in src
+    assert "grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4" in src
+    assert "text-lg font-semibold text-slate-800 mb-4" in src
+    assert "text-lg font-semibold flex items-center gap-2" in src
+    assert 'id="detail-content" className="text-sm text-slate-600"' not in src
+    assert "text-[2rem]" not in src
+    assert "text-[1.75rem]" not in src
+    assert "@container" not in src
+    assert "max-w-[1500px]" not in src
     assert "<ChatPanel" in src

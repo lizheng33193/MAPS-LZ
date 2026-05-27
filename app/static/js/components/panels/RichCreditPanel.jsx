@@ -160,19 +160,19 @@ function RichCreditPanel({ profile }) {
           <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
             <div className="rounded-[24px] border border-slate-200 bg-gradient-to-br from-white to-slate-50 p-5 shadow-sm">
               <div className="text-sm text-slate-500">总负债（MXN）</div>
-              <div className="mt-2 text-3xl font-bold text-slate-800">{formatCurrencyMxn(debtTotal)}</div>
+              <div className="mt-2 text-[28px] font-bold text-slate-800">{formatCurrencyMxn(debtTotal)}</div>
             </div>
             <div className="rounded-[24px] border border-slate-200 bg-gradient-to-br from-white to-slate-50 p-5 shadow-sm">
               <div className="text-sm text-slate-500">月还款估算（MXN）</div>
-              <div className="mt-2 text-3xl font-bold text-slate-800">{formatCurrencyMxn(monthPay)}</div>
+              <div className="mt-2 text-[28px] font-bold text-slate-800">{formatCurrencyMxn(monthPay)}</div>
             </div>
             <div className="rounded-[24px] border border-slate-200 bg-gradient-to-br from-white to-slate-50 p-5 shadow-sm">
               <div className="text-sm text-slate-500">最老账户</div>
-              <div className="mt-2 text-3xl font-bold text-slate-800">{oldestMonths}<span className="ml-2 text-lg font-medium text-slate-500">个月</span></div>
+              <div className="mt-2 text-[28px] font-bold text-slate-800">{oldestMonths}<span className="ml-2 text-base font-medium text-slate-500">个月</span></div>
             </div>
             <div className="rounded-[24px] border border-slate-200 bg-gradient-to-br from-white to-slate-50 p-5 shadow-sm">
               <div className="text-sm text-slate-500">近 12 个月查询次数</div>
-              <div className="mt-2 text-3xl font-bold text-amber-600">{inquiries12m} 次</div>
+              <div className="mt-2 text-[28px] font-bold text-amber-600">{inquiries12m} 次</div>
             </div>
           </div>
 
@@ -252,13 +252,13 @@ function RichCreditPanel({ profile }) {
               return (
                 <div key={`${institution}-${index}`} className="rounded-[24px] border border-slate-100 bg-gradient-to-r from-slate-50 to-white px-5 py-5 flex flex-col md:flex-row md:items-start md:justify-between gap-4">
                   <div className="min-w-0 flex-1">
-                    <div className="font-bold text-[34px] leading-tight text-slate-800 break-words">
+                    <div className="font-bold text-[28px] leading-tight text-slate-800 break-words">
                       {institution}
                     </div>
                     <div className="mt-2 text-[15px] text-slate-500">
                       账户类型：{accountTypeLabel} | 账户形态：{loanOrCreditText} | 账龄：{ageMonths} 个月
                     </div>
-                    <div className="mt-3 text-[28px] font-semibold text-slate-800 break-words">
+                    <div className="mt-3 text-[22px] font-semibold text-slate-800 break-words">
                       {amountLabel}：{formatCurrencyMxn(amountValue)} | 当前余额：{formatCurrencyMxn(balance)}
                     </div>
                     <div className="mt-2 text-sm text-slate-500">使用率解读：{utilRiskText}</div>
