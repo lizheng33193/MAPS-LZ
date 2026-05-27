@@ -5,6 +5,14 @@
 - 整体架构：单体 FastAPI 后端，五层（API → 编排 → Skill 执行 → 数据访问 → 外部服务）
 - 入口文件：`app/main.py`
 
+## 2026-05-27 状态补丁
+
+- NL Chat 现已显式拆分三层状态：`左侧 workspace state / 右侧 chat session / reusable workspace snapshot`。
+- 历史会话列表默认只切右侧 transcript，不再通过整页跳转隐式清空左侧画像。
+- 左侧 workspace 会写入浏览器 `sessionStorage`，同一 tab 刷新后可恢复当前画像与模块状态。
+- `POST /api/orchestrator/sessions` 与 `POST /api/orchestrator/sessions/{id}/messages` 支持可选 `workspace_snapshot`，后端存入 `active_entities.workspace_snapshot`。
+- `agent_loop` 在进入常规 LLM 决策前，会对 read-only 追问执行确定性复用守卫：优先读同 session 成功 `tool_calls`，再读 `workspace_snapshot`；只有缺模块或用户显式要求重跑时才回退到 `run_profile`。
+
 ## 开发指导入口
 
 - 当前项目是 **Codex-first**：项目级开发规则以 `AGENTS.md` 为准。

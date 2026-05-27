@@ -29,7 +29,7 @@ const { createPortal } = ReactDOM;
 const CATEGORY_OPTIONS = ['preference', 'feedback', 'project', 'reference', 'task', 'insight'];
 const STATUS_OPTIONS = ['active', 'archived', 'deleted', 'all'];
 
-function MemoryInspector({ open, onClose }) {
+function MemoryInspector({ open, onClose, onOpenSession, onRestoreSession }) {
   const [status, setStatus] = useState(null);
   const [sessions, setSessions] = useState([]);
   const [sessionQuery, setSessionQuery] = useState('');
@@ -106,14 +106,6 @@ function MemoryInspector({ open, onClose }) {
     loadSessions().catch((err) => setError(String((err && err.message) || err)));
     loadList();
   }, [open]);
-
-  const openSession = useCallback((sessionId) => {
-    if (!sessionId) return;
-    const params = new URLSearchParams(window.location.search);
-    params.set('session', sessionId);
-    params.set('tab', 'chat');
-    window.location.assign(`${window.location.pathname}?${params.toString()}${window.location.hash}`);
-  }, []);
 
   const create = useCallback(async () => {
     if (!draft.content.trim()) return;
@@ -281,19 +273,39 @@ function MemoryInspector({ open, onClose }) {
               {filteredSessions.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-slate-200 bg-white px-3 py-3 text-sm text-slate-500">暂无可恢复会话。</div>
               ) : filteredSessions.map((item) => (
-                <button
+                <div
                   key={item.session_id}
-                  type="button"
-                  onClick={() => openSession(item.session_id)}
-                  className="block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-left hover:bg-slate-50"
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2"
                 >
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-                    <span className="font-mono font-semibold text-slate-700">{item.session_id}</span>
-                    <span className="text-slate-400">{item.updated_at}</span>
+                  <button
+                    type="button"
+                    onClick={() => onOpenSession && onOpenSession(item.session_id)}
+                    className="block w-full text-left hover:bg-slate-50"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                      <span className="font-mono font-semibold text-slate-700">{item.session_id}</span>
+                      <span className="text-slate-400">{item.updated_at}</span>
+                    </div>
+                    <div className="mt-1 truncate text-sm text-slate-600">{item.last_user_message_preview || '暂无用户消息'}</div>
+                    {item.final_message_preview ? <div className="mt-1 truncate text-sm text-slate-400">{item.final_message_preview}</div> : null}
+                  </button>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => onOpenSession && onOpenSession(item.session_id)}
+                      className="inline-flex items-center rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                    >
+                      查看历史会话
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onRestoreSession && onRestoreSession(item.session_id)}
+                      className="inline-flex items-center rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                    >
+                      恢复该次分析结果
+                    </button>
                   </div>
-                  <div className="mt-1 truncate text-sm text-slate-600">{item.last_user_message_preview || '暂无用户消息'}</div>
-                  {item.final_message_preview ? <div className="mt-1 truncate text-sm text-slate-400">{item.final_message_preview}</div> : null}
-                </button>
+                </div>
               ))}
             </div>
           </div>

@@ -5,6 +5,19 @@
 This contract defines the NL Chat progress events and the UI boundary between
 short-term chat history and long-term memory.
 
+## Three-State Model
+
+The dashboard now treats these as separate state layers:
+
+- `workspace state`: the left-side profiling workspace rendered by the browser.
+- `chat session`: the right-side NL Chat transcript stored under
+  `outputs/orchestrator_sessions/`.
+- `workspace snapshot`: a compact, reusable profile snapshot attached to the
+  active chat session for read-only follow-up questions.
+
+Session switching must not imply workspace replacement. Viewing history and
+restoring a profiling workspace are separate actions.
+
 ## Profile Progress Events
 
 `run_profile` keeps its final `tool_completed` event, but may also emit
@@ -60,8 +73,80 @@ Each session list item contains:
 The v1 UI supports listing and opening sessions only. It does not delete or
 hard-delete session files.
 
+Opening a history row now means:
+
+- switch the right-side chat transcript to that session;
+- keep the current left-side workspace untouched;
+- update the URL session pointer without forcing a full page reload.
+
+Restoring the left-side workspace is a second, explicit action:
+
+- `恢复该次分析结果` fetches `GET /api/orchestrator/sessions/{id}`;
+- the frontend rebuilds `analysisResults`, `moduleStatesByUid`, and
+  `traceSeedByUid` from durable `tool_calls` first;
+- if a matching module result is not present in `tool_calls`, the frontend may
+  fall back to `active_entities.workspace_snapshot`.
+
 The UI may add client-side search and filters over this metadata. Search must
 not require full message payloads and must keep session history read-only.
+
+## Workspace Snapshot Contract
+
+`POST /api/orchestrator/sessions` and
+`POST /api/orchestrator/sessions/{id}/messages` accept an optional
+`workspace_snapshot` field.
+
+Stored location:
+
+- `OrchestratorSession.active_entities.workspace_snapshot`
+
+Snapshot wire shape:
+
+```json
+{
+  "country": "mx",
+  "applicationTime": "2026-04-15T12:00:00Z",
+  "results": [
+    {
+      "uid": "8248...",
+      "module": "behavior",
+      "summary": "行为画像摘要",
+      "structured_result": {}
+    }
+  ]
+}
+```
+
+Frontend constraints:
+
+- only include the currently selected UID;
+- only include successful modules;
+- only include `summary` and `structured_result`;
+- do not send charts or full markdown reports.
+
+The browser also keeps a richer `sessionStorage` snapshot for same-tab refresh
+recovery. That browser-local snapshot is not part of long-term memory and is
+not a server API contract.
+
+## Snapshot Reuse Guard
+
+Before the agent enters the normal LLM decision loop, it may answer directly
+from reusable profiling state when all of these are true:
+
+- the user message is a read-only follow-up such as comprehensive summary,
+  behavior summary, credit summary, product advice, or ops advice;
+- the message does not explicitly ask for rerun/refresh/latest regeneration;
+- the current session already contains matching successful `run_profile`
+  results, or a matching `workspace_snapshot`.
+
+Priority:
+
+1. successful `session.tool_calls`
+2. `active_entities.workspace_snapshot`
+
+Direct snapshot answers are deterministic template responses. They bypass both
+`run_profile` and the LLM decision step so that already analyzed users do not
+re-trigger full profiling on simple follow-up questions.
 
 ## Long-Term Memory
 

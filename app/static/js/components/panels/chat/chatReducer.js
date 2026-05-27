@@ -28,13 +28,24 @@ function _finalizeAssistant(messages, finalMessage) {
 
 function chatReducer(state, evt) {
   switch (evt.type) {
+    case 'reset_session':
+      return { ...chatInitialState };
+    case 'restore_session':
+      return {
+        ...chatInitialState,
+        sessionId: evt.session_id || null,
+        messages: Array.isArray(evt.messages) ? evt.messages : [],
+        toolCalls: Array.isArray(evt.tool_calls) ? evt.tool_calls : [],
+        final: evt.final || null,
+        streamEnded: true,
+      };
     case 'user_input':
       return { ...state, error: null, messages: state.messages.concat([{ role: 'user', content: evt.content }]) };
     case 'session_started':
       return { ...state, sessionId: evt.session_id };
     case 'tool_started':
       // 2026-05-04 方案 A v3：记录 startedAtMs 让 ChatPanel 显示已用时间。
-      return { ...state, toolCalls: state.toolCalls.concat([{ tool_call_id: evt.tool_call_id, tool_name: evt.tool_name, status: 'pending', input: evt.input, output: null, startedAtMs: Date.now() }]) };
+      return { ...state, toolCalls: state.toolCalls.concat([{ tool_call_id: evt.tool_call_id, tool_name: evt.tool_name, status: 'pending', input: evt.input, output: null, startedAtMs: Date.now(), source: 'live' }]) };
     case 'tool_progress': {
       const progressEvt = {
         progress_type: evt.progress_type,

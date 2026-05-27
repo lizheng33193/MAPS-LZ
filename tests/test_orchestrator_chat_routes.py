@@ -52,6 +52,64 @@ def test_send_message_writes_pending_prompt(monkeypatch):
         assert routes._PENDING_PROMPTS.get(sid) == "second turn"
 
 
+def test_create_session_persists_workspace_snapshot(monkeypatch):
+    monkeypatch.setenv("MODEL_MODE", "mock")
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    client = TestClient(app)
+    snapshot = {
+        "country": "mx",
+        "applicationTime": None,
+        "results": [
+            {
+                "uid": "824812551379353600",
+                "module": "comprehensive",
+                "summary": "综合画像总结",
+                "structured_result": {"segment": "S4"},
+            }
+        ],
+    }
+
+    sid = client.post(
+        "/api/orchestrator/sessions",
+        json={"workspace_snapshot": snapshot},
+    ).json()["session_id"]
+
+    session_payload = client.get(f"/api/orchestrator/sessions/{sid}").json()
+    assert session_payload["active_entities"]["workspace_snapshot"] == snapshot
+
+
+def test_send_message_updates_workspace_snapshot(monkeypatch):
+    monkeypatch.setenv("MODEL_MODE", "mock")
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    client = TestClient(app)
+    sid = client.post("/api/orchestrator/sessions", json={}).json()["session_id"]
+    snapshot = {
+        "country": "mx",
+        "applicationTime": None,
+        "results": [
+            {
+                "uid": "824812551379353600",
+                "module": "behavior",
+                "summary": "行为画像总结",
+                "structured_result": {"activity": "low"},
+            }
+        ],
+    }
+
+    resp = client.post(
+        f"/api/orchestrator/sessions/{sid}/messages",
+        json={"content": "帮我概括这个用户的行为画像", "workspace_snapshot": snapshot},
+    )
+
+    assert resp.status_code == 200
+    session_payload = client.get(f"/api/orchestrator/sessions/{sid}").json()
+    assert session_payload["active_entities"]["workspace_snapshot"] == snapshot
+
+
 def test_stream_endpoint_runs_loop_and_terminates_with_done(monkeypatch):
     monkeypatch.setenv("MODEL_MODE", "mock")
     from fastapi.testclient import TestClient

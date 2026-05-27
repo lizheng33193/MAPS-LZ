@@ -2,7 +2,7 @@
 // UID mode: fake loading animation → dashboard with per-module progressive rendering.
 // File mode: fake loading animation → /api/analyze-file one-shot → dashboard.
 
-const { useState, useRef, useEffect } = React;
+const { useState, useRef, useEffect, useCallback } = React;
 const { HomeView, LoadingView, DashboardView } = window.AppComponents;
 const { normalizeAnalysisResult, buildEmptyAgentOutput, normalizeApplicationTime } = window.AppUtils.normalize;
 const { analyzeByFile, analyzeModule, fetchUiConfig, fetchTrace } = window.AppServices.api;
@@ -30,6 +30,7 @@ const MODULE_RESULT_MAP = {
 };
 
 const VALID_DASHBOARD_TABS = ['comprehensive', 'app', 'behavior', 'credit', 'product', 'ops', 'trace', 'chat'];
+const WORKSPACE_SNAPSHOT_STORAGE_KEY = 'maps-lz.workspace-snapshot.v1';
 
 function getInitialDashboardTab() {
   const params = new URLSearchParams(window.location.search);
@@ -51,6 +52,11 @@ function getInitialChatFocusFromUrl() {
   return params.get('tab') === 'chat' || Boolean(params.get('session'));
 }
 
+function getInitialSessionIdFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('session') || '';
+}
+
 function createInitialModuleStates(status) {
   status = status || 'idle';
   return {
@@ -64,30 +70,254 @@ function createInitialModuleStates(status) {
   };
 }
 
+function buildWorkspaceSnapshotFromAppState({
+  country,
+  applicationTime,
+  analysisResults,
+  moduleStates,
+  moduleStatesByUid,
+  traceSeedByUid,
+  selectedResultIndex,
+}) {
+  return {
+    country: country || 'mx',
+    applicationTime: applicationTime || '',
+    analysisResults: Array.isArray(analysisResults) ? analysisResults : [],
+    moduleStates: moduleStates && typeof moduleStates === 'object' ? moduleStates : createInitialModuleStates(),
+    moduleStatesByUid: moduleStatesByUid && typeof moduleStatesByUid === 'object' ? moduleStatesByUid : {},
+    traceSeedByUid: traceSeedByUid && typeof traceSeedByUid === 'object' ? traceSeedByUid : {},
+    selectedResultIndex: Number.isFinite(Number(selectedResultIndex)) ? Number(selectedResultIndex) : 0,
+  };
+}
+
+function buildChatWorkspaceSnapshotFromAppState({
+  country,
+  applicationTime,
+  analysisResults,
+  selectedResultIndex,
+  moduleStates,
+  moduleStatesByUid,
+}) {
+  const results = Array.isArray(analysisResults) ? analysisResults : [];
+  const selected = results[selectedResultIndex] || results[0];
+  if (!selected || !selected.uid) return null;
+  const effectiveStates = (moduleStatesByUid && moduleStatesByUid[selected.uid]) || moduleStates || createInitialModuleStates();
+  const normalizedApplicationTime = normalizeApplicationTime(applicationTime) || null;
+  const compactRows = Object.entries(MODULE_RESULT_MAP)
+    .filter(([moduleName]) => moduleName !== 'trace')
+    .map(([moduleName, resultKey]) => {
+      const moduleState = effectiveStates[moduleName] || {};
+      const agentOutput = selected[resultKey];
+      if (moduleState.status !== 'success' || !agentOutput) return null;
+      return {
+        uid: selected.uid,
+        module: moduleName,
+        summary: agentOutput.summary || '',
+        structured_result: (agentOutput.structured_result && typeof agentOutput.structured_result === 'object') ? agentOutput.structured_result : {},
+        country: country || 'mx',
+        applicationTime: normalizedApplicationTime,
+      };
+    })
+    .filter(Boolean);
+  if (!compactRows.length) return null;
+  return {
+    country: country || 'mx',
+    applicationTime: normalizedApplicationTime,
+    results: compactRows,
+  };
+}
+
+function _readWorkspaceSnapshotFromSessionStorage() {
+  if (typeof window === 'undefined' || !window.sessionStorage) return null;
+  try {
+    const raw = window.sessionStorage.getItem(WORKSPACE_SNAPSHOT_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (_err) {
+    return null;
+  }
+}
+
+function _applyProfileResultRowToWorkspace(resultsByUid, moduleStatesByUid, row) {
+  if (!row || !row.uid || !row.module) return;
+  const resultKey = MODULE_RESULT_MAP[row.module];
+  if (!resultKey) return;
+  const targetUid = row.uid;
+  if (!resultsByUid[targetUid]) {
+    resultsByUid[targetUid] = normalizeAnalysisResult({ uid: targetUid }, targetUid);
+  }
+  if (!moduleStatesByUid[targetUid]) {
+    moduleStatesByUid[targetUid] = createInitialModuleStates();
+  }
+  const payload = row.payload || {};
+  resultsByUid[targetUid] = {
+    ...resultsByUid[targetUid],
+    uid: targetUid,
+    [resultKey]: {
+      summary: payload.summary || '',
+      structured_result: (payload.structured_result && typeof payload.structured_result === 'object') ? payload.structured_result : {},
+      charts: Array.isArray(payload.charts) ? payload.charts : [],
+      report_markdown: payload.report_markdown || '',
+    },
+  };
+  moduleStatesByUid[targetUid] = {
+    ...moduleStatesByUid[targetUid],
+    [row.module]: { status: row.status === 'error' ? 'error' : 'success', error: row.error || '' },
+  };
+}
+
+function restoreWorkspaceSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return null;
+  const analysisResults = Array.isArray(snapshot.analysisResults)
+    ? snapshot.analysisResults.map((item, index) => normalizeAnalysisResult(item, (item && item.uid) || `restored_${index + 1}`))
+    : [];
+  const moduleStates = snapshot.moduleStates && typeof snapshot.moduleStates === 'object'
+    ? snapshot.moduleStates
+    : createInitialModuleStates();
+  const moduleStatesByUid = snapshot.moduleStatesByUid && typeof snapshot.moduleStatesByUid === 'object'
+    ? snapshot.moduleStatesByUid
+    : {};
+  const traceSeedByUid = snapshot.traceSeedByUid && typeof snapshot.traceSeedByUid === 'object'
+    ? snapshot.traceSeedByUid
+    : {};
+  const maxIndex = Math.max(0, analysisResults.length - 1);
+  const selectedResultIndex = Math.min(maxIndex, Math.max(0, Number(snapshot.selectedResultIndex) || 0));
+  return {
+    country: snapshot.country === 'th' ? 'th' : 'mx',
+    applicationTime: snapshot.applicationTime || '2026-04-15T12:00',
+    analysisResults,
+    moduleStates,
+    moduleStatesByUid,
+    traceSeedByUid,
+    selectedResultIndex,
+  };
+}
+
+function restoreWorkspaceFromSession(sessionPayload) {
+  if (!sessionPayload || typeof sessionPayload !== 'object') return null;
+  const resultsByUid = {};
+  const moduleStatesByUid = {};
+  const traceSeedByUid = {};
+  const restoredUidOrder = [];
+  let firstSuccessUid = '';
+  let restoredApplicationTime = '';
+
+  function rememberUid(targetUid) {
+    if (!targetUid || restoredUidOrder.includes(targetUid)) return;
+    restoredUidOrder.push(targetUid);
+  }
+
+  function applyRow(uidValue, moduleName, payload, status, error) {
+    if (!uidValue || !moduleName || !payload) return;
+    rememberUid(uidValue);
+    _applyProfileResultRowToWorkspace(resultsByUid, moduleStatesByUid, {
+      uid: uidValue,
+      module: moduleName,
+      payload,
+      status,
+      error,
+    });
+    if (!firstSuccessUid && status !== 'error') firstSuccessUid = uidValue;
+  }
+
+  const toolCalls = Array.isArray(sessionPayload.tool_calls) ? sessionPayload.tool_calls : [];
+  toolCalls.forEach((record) => {
+    if (!record || typeof record !== 'object') return;
+    if (record.tool_name === 'run_profile' && record.output && Array.isArray(record.output.results)) {
+      if (!restoredApplicationTime && record.input && typeof record.input.app_time === 'string' && record.input.app_time) {
+        restoredApplicationTime = record.input.app_time;
+      }
+      record.output.results.forEach((row) => {
+        if (!row || typeof row !== 'object') return;
+        const payload = row.result && row.result.data;
+        const status = row.result && row.result.status;
+        if (status === 'ok' && payload) {
+          applyRow(row.uid, row.module, payload, 'success', '');
+        } else if (row.uid && row.module) {
+          rememberUid(row.uid);
+          moduleStatesByUid[row.uid] = moduleStatesByUid[row.uid] || createInitialModuleStates();
+          moduleStatesByUid[row.uid] = {
+            ...moduleStatesByUid[row.uid],
+            [row.module]: { status: 'error', error: (row.result && row.result.error && row.result.error.message) || '该模块分析失败' },
+          };
+        }
+      });
+    }
+    if (record.tool_name === 'run_trace' && record.status === 'done' && record.output && record.input && record.input.uid) {
+      const traceUid = record.input.uid;
+      rememberUid(traceUid);
+      traceSeedByUid[traceUid] = { requestStatus: 'success', response: record.output };
+      if (!resultsByUid[traceUid]) {
+        resultsByUid[traceUid] = normalizeAnalysisResult({ uid: traceUid }, traceUid);
+      }
+      moduleStatesByUid[traceUid] = moduleStatesByUid[traceUid] || createInitialModuleStates();
+      moduleStatesByUid[traceUid] = {
+        ...moduleStatesByUid[traceUid],
+        trace: { status: 'success', error: '' },
+      };
+    }
+  });
+
+  const workspaceSnapshot = sessionPayload.active_entities && sessionPayload.active_entities.workspace_snapshot;
+  if (workspaceSnapshot && typeof workspaceSnapshot === 'object' && Array.isArray(workspaceSnapshot.results)) {
+    if (!restoredApplicationTime && workspaceSnapshot.applicationTime) {
+      restoredApplicationTime = workspaceSnapshot.applicationTime;
+    }
+    workspaceSnapshot.results.forEach((row) => {
+      if (!row || typeof row !== 'object') return;
+      const existingState = moduleStatesByUid[row.uid] && moduleStatesByUid[row.uid][row.module];
+      if (existingState && existingState.status === 'success') return;
+      applyRow(row.uid, row.module, {
+        summary: row.summary || '',
+        structured_result: (row.structured_result && typeof row.structured_result === 'object') ? row.structured_result : {},
+        charts: [],
+        report_markdown: '',
+      }, 'success', '');
+    });
+  }
+
+  const orderedResults = restoredUidOrder.map((targetUid) => resultsByUid[targetUid]).filter(Boolean);
+  const selectedUid = firstSuccessUid || (orderedResults[0] && orderedResults[0].uid) || '';
+  const selectedResultIndex = orderedResults.findIndex((item) => item && item.uid === selectedUid);
+  return {
+    country: sessionPayload.country === 'th' ? 'th' : 'mx',
+    applicationTime: restoredApplicationTime || '2026-04-15T12:00',
+    analysisResults: orderedResults,
+    moduleStates: (selectedUid && moduleStatesByUid[selectedUid]) || createInitialModuleStates(),
+    moduleStatesByUid,
+    traceSeedByUid,
+    selectedResultIndex: selectedResultIndex >= 0 ? selectedResultIndex : 0,
+  };
+}
+
+const INITIAL_WORKSPACE_STATE = restoreWorkspaceSnapshot(_readWorkspaceSnapshotFromSessionStorage()) || null;
+
 function App() {
   const [view, setView] = useState(getInitialViewFromUrl);
   const [uid, setUid] = useState('');
   const [uidError, setUidError] = useState('');
-  const [applicationTime, setApplicationTime] = useState('2026-04-15T12:00');
+  const [applicationTime, setApplicationTime] = useState(() => (INITIAL_WORKSPACE_STATE && INITIAL_WORKSPACE_STATE.applicationTime) || '2026-04-15T12:00');
   const [activeTab, setActiveTab] = useState(getInitialDashboardTab);
-  const [analysisResults, setAnalysisResults] = useState([]);
-  const [selectedResultIndex, setSelectedResultIndex] = useState(0);
+  const [analysisResults, setAnalysisResults] = useState(() => (INITIAL_WORKSPACE_STATE && INITIAL_WORKSPACE_STATE.analysisResults) || []);
+  const [selectedResultIndex, setSelectedResultIndex] = useState(() => (INITIAL_WORKSPACE_STATE && INITIAL_WORKSPACE_STATE.selectedResultIndex) || 0);
   const [errorMessage, setErrorMessage] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
-  const [moduleStates, setModuleStates] = useState(createInitialModuleStates());
+  const [moduleStates, setModuleStates] = useState(() => (INITIAL_WORKSPACE_STATE && INITIAL_WORKSPACE_STATE.moduleStates) || createInitialModuleStates());
   // 2026-05-04 方案 A v2：按 UID 隔离的模块状态。NL Chat 多 UID 跑批不再互相覆盖。
   // DashboardView 根据 selectedResult.uid 优先读这里，找不到再回退到全局 moduleStates。
-  const [moduleStatesByUid, setModuleStatesByUid] = useState({});
+  const [moduleStatesByUid, setModuleStatesByUid] = useState(() => (INITIAL_WORKSPACE_STATE && INITIAL_WORKSPACE_STATE.moduleStatesByUid) || {});
   const [uidTransitionDurationMs, setUidTransitionDurationMs] = useState(DEFAULT_UID_TRANSITION_DURATION_MS);
   const [chatFocusRequested, setChatFocusRequested] = useState(getInitialChatFocusFromUrl);
+  const [chatSessionId, setChatSessionId] = useState(getInitialSessionIdFromUrl);
   // 2026-05-04 方案 A：NL Chat 跑过的 trace 结果种子，注入 DashboardView 的 traceCacheByUid，
   // 避免用户跳到 trace tab 时再发一次 /api/trace 请求（trace 同样会跑 LLM）。
-  const [traceSeedByUid, setTraceSeedByUid] = useState({});
+  const [traceSeedByUid, setTraceSeedByUid] = useState(() => (INITIAL_WORKSPACE_STATE && INITIAL_WORKSPACE_STATE.traceSeedByUid) || {});
 
   const [country, setCountry] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     const v = params.get('country');
-    return v === 'th' ? 'th' : 'mx';
+    if (v === 'th') return 'th';
+    if (v === 'mx') return 'mx';
+    return (INITIAL_WORKSPACE_STATE && INITIAL_WORKSPACE_STATE.country) || 'mx';
   });
 
   useEffect(() => {
@@ -96,6 +326,22 @@ function App() {
     window.history.replaceState({}, '', url.toString());
   }, [country]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.sessionStorage) return;
+    try {
+      const snapshot = buildWorkspaceSnapshotFromAppState({
+        country,
+        applicationTime,
+        analysisResults,
+        moduleStates,
+        moduleStatesByUid,
+        traceSeedByUid,
+        selectedResultIndex,
+      });
+      window.sessionStorage.setItem(WORKSPACE_SNAPSHOT_STORAGE_KEY, JSON.stringify(snapshot));
+    } catch (_err) {}
+  }, [country, applicationTime, analysisResults, moduleStates, moduleStatesByUid, traceSeedByUid, selectedResultIndex]);
+
   function resetAnalysisStateForCountry() {
     setAnalysisResults([]);
     setSelectedResultIndex(0);
@@ -103,6 +349,7 @@ function App() {
     setModuleStatesByUid({});
     setErrorMessage('');
     setTraceSeedByUid({});
+    setChatSessionId('');
   }
 
   function handleCountryChange(next) {
@@ -111,6 +358,28 @@ function App() {
     resetAnalysisStateForCountry();
     setCountry(next);
   }
+
+  const handleChatSessionChange = useCallback((nextSessionId) => {
+    setChatSessionId(nextSessionId || '');
+    if (nextSessionId) {
+      setChatFocusRequested(true);
+      setView('dashboard');
+    }
+  }, []);
+
+  const handleRestoreWorkspaceSession = useCallback((sessionPayload) => {
+    const restored = restoreWorkspaceFromSession(sessionPayload);
+    if (!restored) return;
+    setAnalysisResults(restored.analysisResults);
+    setSelectedResultIndex(restored.selectedResultIndex);
+    setModuleStates(restored.moduleStates);
+    setModuleStatesByUid(restored.moduleStatesByUid);
+    setTraceSeedByUid(restored.traceSeedByUid);
+    setApplicationTime(restored.applicationTime);
+    setCountry(restored.country);
+    setActiveTab('comprehensive');
+    setView('dashboard');
+  }, []);
 
   // Fetch backend-configurable transition duration once on mount.
   useEffect(() => {
@@ -129,13 +398,18 @@ function App() {
   useEffect(() => {
     if (view !== 'dashboard') return;
     const params = new URLSearchParams(window.location.search);
-    const tabTarget = (params.get('session') || chatFocusRequested) ? 'chat' : activeTab;
+    const tabTarget = (chatSessionId || chatFocusRequested) ? 'chat' : activeTab;
+    if (chatSessionId) {
+      params.set('session', chatSessionId);
+    } else {
+      params.delete('session');
+    }
     if (params.get('tab') !== tabTarget) {
       params.set('tab', tabTarget);
-      const nextUrl = `${window.location.pathname}?${params.toString()}${window.location.hash}`;
-      window.history.replaceState({}, '', nextUrl);
     }
-  }, [view, activeTab, chatFocusRequested]);
+    const nextUrl = `${window.location.pathname}?${params.toString()}${window.location.hash}`;
+    window.history.replaceState({}, '', nextUrl);
+  }, [view, activeTab, chatFocusRequested, chatSessionId]);
 
   function playLoadingSequence() {
     return new Promise((resolve) => {
@@ -355,6 +629,7 @@ function App() {
     setErrorMessage('');
     setUidError('');
     setChatFocusRequested(false);
+    setChatSessionId('');
     setView('loading');
 
     try {
@@ -446,6 +721,17 @@ function App() {
       onCountryChange={handleCountryChange}
       chatFocusRequested={chatFocusRequested}
       onChatFocusChange={setChatFocusRequested}
+      chatSessionId={chatSessionId}
+      onChatSessionChange={handleChatSessionChange}
+      chatWorkspaceSnapshot={buildChatWorkspaceSnapshotFromAppState({
+        country,
+        applicationTime,
+        analysisResults,
+        selectedResultIndex,
+        moduleStates,
+        moduleStatesByUid,
+      })}
+      onRestoreWorkspaceSession={handleRestoreWorkspaceSession}
     />
   );
 }

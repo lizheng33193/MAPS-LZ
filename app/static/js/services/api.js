@@ -124,21 +124,21 @@ async function analyzeModule(targetUid, moduleName, normalizedApplicationTime, c
   return payload;
 }
 
-async function createOrchestratorSession(initialMessage) {
+async function createOrchestratorSession(initialMessage, workspaceSnapshot) {
   const res = await fetch('/api/orchestrator/sessions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ initial_message: initialMessage })
+    body: JSON.stringify({ initial_message: initialMessage, workspace_snapshot: workspaceSnapshot })
   });
   if (!res.ok) throw new Error(`createOrchestratorSession ${res.status}`);
   return res.json();
 }
 
-async function sendOrchestratorMessage(sessionId, content) {
+async function sendOrchestratorMessage(sessionId, content, workspaceSnapshot) {
   const res = await fetch(`/api/orchestrator/sessions/${encodeURIComponent(sessionId)}/messages`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content })
+    body: JSON.stringify({ content, workspace_snapshot: workspaceSnapshot })
   });
   if (!res.ok) throw new Error(`sendOrchestratorMessage ${res.status}`);
   return res.json();

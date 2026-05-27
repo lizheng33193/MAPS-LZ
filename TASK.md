@@ -42,8 +42,14 @@
 - [x] Orchestrator Memory V1 → SQLite + FTS5 长期记忆、Memory 管理 API / Inspector、离线评估集与 runner（2026-05-25，baseline checkpoint `3c10d85`，contract: docs/specs/memory-behavior-contract.md）
 - [x] Memory recovery audit → 确认 Memory 管理/评估功能仍在，恢复本地 `.env/key.json/data` 运行文件，并记录不可恢复的本地 SQLite runtime state（2026-05-25，docs/reviews/memory-recovery-audit-2026-05-25.md）
 - [x] Orchestrator Chat progress + memory/session UI contract → 模块级 `tool_progress`、短期会话历史列表、长期记忆心智澄清（2026-05-26；docs/specs/orchestrator-chat-progress-memory-ui-contract.md；plan: docs/plans/orchestrator-chat-progress-memory-ui-plan.md）
+- [x] NL Chat workspace snapshot + history restore split → 历史会话仅切右侧 transcript、显式恢复左侧 workspace、sessionStorage 同 tab 恢复、read-only 追问优先复用已有画像结果（2026-05-27；docs/plans/orchestrator-chat-workspace-snapshot-plan.md）
 
 ## 已完成（最近）
+- [x] NL Chat 状态分层修复（2026-05-27）
+  - workspace state / chat session / reusable workspace snapshot 三层显式分离
+  - 历史会话点击不再整页跳转，不再清空左侧画像
+  - 新增“恢复该次分析结果”，按历史 `tool_calls` 重建左侧 workspace
+  - 只读追问命中已有画像结果时，agent loop 直接模板化回复，不再默认重跑 `run_profile`
 - [x] 前端渐进加载迁移（参考项目融合）→ docs/plans/frontend-progressive-loading-plan.md（2026-05-02）
   - 后端：shared_orchestrator 单例 + 模块级缓存 + `/api/analyze-module` + `/api/ui-config`
   - 前端：SSE → 模块级渐进加载 + 假动画过渡 + ModuleStatusPanel 四态重试 + trace 独立加载

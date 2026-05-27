@@ -17,7 +17,7 @@ import re
 import threading
 import uuid
 from datetime import datetime, timezone
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator
 
 from app.core.model_client import ModelClient
 from app.services.orchestrator_agent.budget import (
@@ -66,6 +66,29 @@ _NAME_TO_CODE = {
     "巴西": "br", "brazil": "br",
 }
 
+_UID_RE = re.compile(r"\b\d{18}\b")
+_RERUN_HINTS = ("重新分析", "重新跑", "刷新", "最新", "重新生成")
+_READ_ONLY_HINTS = (
+    "综合画像", "用户画像", "行为画像", "行为摘要", "行为特点", "征信画像", "app画像",
+    "产品策略", "运营策略", "挽留方式", "总结", "简单描述", "概括", "特点",
+)
+_MODULE_PROMPT_HINTS: dict[str, tuple[str, ...]] = {
+    "app": ("app画像", "应用画像", "app 使用", "安装应用", "app安装"),
+    "behavior": ("行为画像", "行为摘要", "行为特点", "活跃度", "流失风险"),
+    "credit": ("征信画像", "信用画像", "征信", "信用分", "负债"),
+    "comprehensive": ("综合画像", "用户画像", "总体画像", "整体画像"),
+    "product": ("产品策略", "挽留方式", "续贷策略", "产品建议"),
+    "ops": ("运营策略", "催收策略", "触达策略", "运营建议"),
+}
+_PROFILE_MODULE_LABELS = {
+    "app": "App画像",
+    "behavior": "行为画像",
+    "credit": "征信画像",
+    "comprehensive": "综合画像",
+    "product": "产品策略",
+    "ops": "运营策略",
+}
+
 
 def _detect_country(prompt: str) -> str | None:
     """V1 粗粒度提取：keyword + 2-位短码 regex。匹不到返回 None。"""
@@ -94,6 +117,258 @@ def _build_llm_input(system_prompt: str, messages: list) -> str:
         parts.append(f"[{m.role}] {m.content}\n")
     parts.append("\n--- 请输出下一步决策 JSON ---\n")
     return "".join(parts)
+
+
+def _has_any(text: str, keywords: tuple[str, ...]) -> bool:
+    lowered = text.lower()
+    return any(keyword.lower() in lowered for keyword in keywords)
+
+
+def _detect_requested_modules(prompt: str) -> list[str]:
+    matched: list[str] = []
+    for module_name, hints in _MODULE_PROMPT_HINTS.items():
+        if _has_any(prompt, hints):
+            matched.append(module_name)
+    if matched:
+        return matched
+    if _has_any(prompt, _READ_ONLY_HINTS):
+        return ["comprehensive"]
+    return []
+
+
+def _extract_requested_uid(prompt: str) -> str | None:
+    matched = _UID_RE.search(prompt or "")
+    return matched.group(0) if matched else None
+
+
+def _normalize_snapshot_row(
+    row: dict[str, Any],
+    *,
+    default_country: str | None,
+    default_app_time: str | None,
+) -> dict[str, Any] | None:
+    uid = str(row.get("uid") or "").strip()
+    module = str(row.get("module") or "").strip()
+    if not uid or not module:
+        return None
+    structured_result = row.get("structured_result")
+    if not isinstance(structured_result, dict):
+        structured_result = {}
+    return {
+        "uid": uid,
+        "module": module,
+        "summary": str(row.get("summary") or "").strip(),
+        "structured_result": structured_result,
+        "country": row.get("country") or default_country,
+        "applicationTime": row.get("applicationTime") or default_app_time,
+    }
+
+
+def _extract_reusable_profile_results(session: OrchestratorSession) -> dict[str, dict[str, dict[str, Any]]]:
+    reusable: dict[str, dict[str, dict[str, Any]]] = {}
+
+    def _put(entry: dict[str, Any], *, overwrite: bool) -> None:
+        uid = entry["uid"]
+        module = entry["module"]
+        reusable.setdefault(uid, {})
+        if overwrite or module not in reusable[uid]:
+            reusable[uid][module] = entry
+
+    for record in session.tool_calls:
+        if record.tool_name != "run_profile" or record.status != "done" or not isinstance(record.output, dict):
+            continue
+        default_app_time = record.input.get("app_time") if isinstance(record.input, dict) else None
+        rows = record.output.get("results")
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            result = row.get("result")
+            data = result.get("data") if isinstance(result, dict) else None
+            if not (isinstance(result, dict) and result.get("status") == "ok" and isinstance(data, dict)):
+                continue
+            normalized = _normalize_snapshot_row(
+                {
+                    "uid": row.get("uid"),
+                    "module": row.get("module"),
+                    "summary": data.get("summary"),
+                    "structured_result": data.get("structured_result"),
+                },
+                default_country=session.country,
+                default_app_time=default_app_time,
+            )
+            if normalized:
+                _put(normalized, overwrite=True)
+
+    session_snapshot = session.active_entities.get("workspace_snapshot")
+    if isinstance(session_snapshot, dict):
+        default_country = session_snapshot.get("country") or session.country
+        default_app_time = session_snapshot.get("applicationTime")
+        rows = session_snapshot.get("results")
+        if isinstance(rows, list):
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                normalized = _normalize_snapshot_row(
+                    row,
+                    default_country=default_country,
+                    default_app_time=default_app_time,
+                )
+                if normalized:
+                    _put(normalized, overwrite=False)
+
+    return reusable
+
+
+def _pick_snapshot_uid(
+    prompt: str,
+    reusable_results: dict[str, dict[str, dict[str, Any]]],
+) -> str | None:
+    requested_uid = _extract_requested_uid(prompt)
+    if requested_uid and requested_uid in reusable_results:
+        return requested_uid
+    if len(reusable_results) == 1:
+        return next(iter(reusable_results.keys()))
+    if reusable_results:
+        return next(iter(reusable_results.keys()))
+    return None
+
+
+def _build_snapshot_final_message(
+    prompt: str,
+    *,
+    uid: str,
+    modules: list[str],
+    entries: dict[str, dict[str, Any]],
+) -> str:
+    if modules == ["behavior"] and entries.get("behavior"):
+        behavior = entries["behavior"]
+        return (
+            f"## 行为画像分析报告：UID {uid}\n\n"
+            f"{behavior.get('summary') or '暂无行为画像摘要。'}"
+        )
+
+    if modules == ["app"] and entries.get("app"):
+        app_result = entries["app"]
+        return (
+            f"## App画像分析报告：UID {uid}\n\n"
+            f"{app_result.get('summary') or '暂无 App 画像摘要。'}"
+        )
+
+    if modules == ["credit"] and entries.get("credit"):
+        credit = entries["credit"]
+        return (
+            f"## 征信画像分析报告：UID {uid}\n\n"
+            f"{credit.get('summary') or '暂无征信画像摘要。'}"
+        )
+
+    if modules == ["product"] and entries.get("product"):
+        product = entries["product"]
+        return (
+            f"## 产品策略建议：UID {uid}\n\n"
+            f"{product.get('summary') or '暂无产品策略摘要。'}"
+        )
+
+    if modules == ["ops"] and entries.get("ops"):
+        ops = entries["ops"]
+        return (
+            f"## 运营策略建议：UID {uid}\n\n"
+            f"{ops.get('summary') or '暂无运营策略摘要。'}"
+        )
+
+    comprehensive = entries.get("comprehensive")
+    lines = [f"## 综合画像分析报告：UID {uid}", ""]
+    if comprehensive:
+        lines.append(comprehensive.get("summary") or "暂无综合画像摘要。")
+    else:
+        lines.append("暂无综合画像摘要。")
+
+    detail_modules = ["app", "behavior", "credit", "product", "ops"]
+    detail_lines = []
+    for module_name in detail_modules:
+        entry = entries.get(module_name)
+        if not entry:
+            continue
+        detail_lines.append(
+            f"- **{_PROFILE_MODULE_LABELS[module_name]}**：{entry.get('summary') or '暂无摘要。'}"
+        )
+    if detail_lines:
+        lines.extend(["", "### 已有模块结论", *detail_lines])
+    return "\n".join(lines)
+
+
+def _maybe_answer_from_reusable_results(
+    session: OrchestratorSession,
+    prompt: str,
+    detected_country: str | None,
+) -> str | None:
+    if _has_any(prompt, _RERUN_HINTS):
+        return None
+    required_modules = _detect_requested_modules(prompt)
+    if not required_modules:
+        return None
+
+    reusable_results = _extract_reusable_profile_results(session)
+    if not reusable_results:
+        return None
+
+    uid = _pick_snapshot_uid(prompt, reusable_results)
+    if not uid:
+        return None
+    entries = reusable_results.get(uid) or {}
+    if any(module_name not in entries for module_name in required_modules):
+        return None
+
+    if detected_country:
+        for module_name in required_modules:
+            entry_country = str(entries[module_name].get("country") or "").strip().lower()
+            if entry_country and entry_country != detected_country.lower():
+                return None
+
+    return _build_snapshot_final_message(
+        prompt,
+        uid=uid,
+        modules=required_modules,
+        entries=entries,
+    )
+
+
+def _persist_final_message(
+    session: OrchestratorSession,
+    *,
+    prompt: str,
+    final_message: str,
+    confidence: float,
+    detected_country: str | None,
+) -> dict[str, Any]:
+    session.final_message = final_message
+    session.confidence = confidence
+    session.status = "completed"
+    session.messages.append(OrchestratorMessage(
+        role="assistant",
+        content=final_message,
+        timestamp=datetime.now(timezone.utc),
+    ))
+    session.rolling_summary = _append_summary_line(
+        session.rolling_summary,
+        prompt,
+        final_message,
+    )
+    maybe_write_task_memory(
+        session=session,
+        user_text=prompt,
+        assistant_text=final_message,
+        country=detected_country,
+    )
+    save_session(session)
+    return {
+        "type": "final",
+        "final_message": final_message,
+        "total_rounds": 1,
+        "total_tokens": session.total_tokens,
+        "confidence": confidence,
+    }
 
 
 async def run_agent_loop(
@@ -138,6 +413,17 @@ async def run_agent_loop(
         if memory_context:
             system_prompt = system_prompt + "\n\n" + memory_context
 
+    reusable_final = _maybe_answer_from_reusable_results(session, prompt, detected_country)
+    if reusable_final:
+        yield _persist_final_message(
+            session,
+            prompt=prompt,
+            final_message=reusable_final,
+            confidence=0.92,
+            detected_country=detected_country,
+        )
+        return
+
     for round_idx in range(MAX_ROUNDS):
         # 1) LLM 决策（同步 generate_structured 用 to_thread 包装）
         llm_input = _build_llm_input(system_prompt, session.messages)
@@ -175,35 +461,13 @@ async def run_agent_loop(
 
         # 3) Final?
         if decision.get("final_message"):
-            session.final_message = decision["final_message"]
-            session.confidence = decision.get("confidence")
-            session.status = "completed"
-            # Plan #04 hotfix：把 assistant final 也 append 进 messages，
-            # 否则 GET /sessions/{id} 拿不到 assistant 气泡 → TC-4 刷新恢复缺 AI 回复。
-            session.messages.append(OrchestratorMessage(
-                role="assistant",
-                content=decision["final_message"],
-                timestamp=datetime.now(timezone.utc),
-            ))
-            session.rolling_summary = _append_summary_line(
-                session.rolling_summary,
-                prompt,
-                decision["final_message"],
-            )
-            maybe_write_task_memory(
-                session=session,
-                user_text=prompt,
-                assistant_text=decision["final_message"],
-                country=detected_country,
-            )
-            save_session(session)
-            yield {
-                "type": "final",
-                "final_message": decision["final_message"],
-                "total_rounds": round_idx + 1,
-                "total_tokens": session.total_tokens,
-                "confidence": session.confidence or 0.0,
-            }
+            yield _persist_final_message(
+                session,
+                prompt=prompt,
+                final_message=decision["final_message"],
+                confidence=decision.get("confidence") or 0.0,
+                detected_country=detected_country,
+            ) | {"total_rounds": round_idx + 1}
             return
 
         # 4) Tool call
