@@ -26,6 +26,16 @@ def test_app_owns_tab_url_routing() -> None:
     assert "window.history.replaceState" in src
 
 
+def test_app_persists_workspace_snapshot_in_session_storage() -> None:
+    src = APP.read_text(encoding="utf-8")
+
+    assert "WORKSPACE_SNAPSHOT_STORAGE_KEY" in src
+    assert "buildWorkspaceSnapshotFromAppState" in src
+    assert "restoreWorkspaceFromSession" in src
+    assert "window.sessionStorage.getItem" in src
+    assert "window.sessionStorage.setItem" in src
+
+
 def test_chat_panel_restores_and_writes_session_url() -> None:
     src = CHAT_PANEL.read_text(encoding="utf-8")
     assert re.search(r"\.get\(\s*['\"]session['\"]\s*\)", src)
@@ -61,6 +71,15 @@ def test_memory_inspector_wires_management_api() -> None:
     assert "restoreMemory" in inspector_src
     assert "deleteMemory" in inspector_src
     assert "MemoryInspector" in panel_src
+
+
+def test_memory_inspector_switches_chat_history_without_full_page_navigation() -> None:
+    inspector_src = MEMORY_INSPECTOR.read_text(encoding="utf-8")
+
+    assert "onOpenSession" in inspector_src
+    assert "onRestoreSession" in inspector_src
+    assert "window.location.assign" not in inspector_src
+    assert "恢复该次分析结果" in inspector_src
 
 
 def test_chat_panel_uses_memory_drawer_instead_of_inline_block() -> None:
@@ -161,3 +180,41 @@ def test_chat_message_list_uses_larger_readable_chat_typography() -> None:
     assert "text-[14px]" in src
     assert "leading-7" in src
     assert "text-[13px]" not in src
+
+
+def test_chat_panel_restores_on_session_change_and_resets_local_state() -> None:
+    src = CHAT_PANEL.read_text(encoding="utf-8")
+
+    assert "externalSessionId" in src
+    assert "dispatch({ type: 'reset_session' })" in src
+    assert "onOpenSession" in src
+    assert "onRestoreSession" in src
+
+
+def test_chat_panel_hydrates_history_only_when_session_id_changes() -> None:
+    src = CHAT_PANEL.read_text(encoding="utf-8")
+
+    assert "lastHydratedSessionIdRef" in src
+    assert "onSessionChangeRef" in src
+    assert "onRestoreWorkspaceSessionRef" in src
+    assert "if (lastHydratedSessionIdRef.current === sessionId) return undefined;" in src
+    assert "}, [externalSessionId, resetSessionArtifacts]);" in src
+    assert "}, [externalSessionId, onSessionChange, resetSessionArtifacts]);" not in src
+
+
+def test_chat_panel_marks_history_tool_calls_and_filters_live_callbacks() -> None:
+    src = CHAT_PANEL.read_text(encoding="utf-8")
+    reducer_src = (REPO / "app" / "static" / "js" / "components" / "panels" / "chat" / "chatReducer.js").read_text(encoding="utf-8")
+
+    assert "source: 'history'" in src
+    assert "source: 'live'" in reducer_src
+    assert src.count("if (t.source !== 'live') return;") >= 3
+    assert "const hasPending = state.toolCalls.some((t) => t.source === 'live' && t.status === 'pending');" in src
+
+
+def test_app_stabilizes_chat_session_callbacks() -> None:
+    src = APP.read_text(encoding="utf-8")
+
+    assert "useCallback" in src
+    assert "const handleChatSessionChange = useCallback(" in src
+    assert "const handleRestoreWorkspaceSession = useCallback(" in src

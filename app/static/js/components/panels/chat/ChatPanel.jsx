@@ -23,7 +23,44 @@ const PROFILE_MODULE_LABELS = {
   ops: '运营策略',
 };
 
-function ChatPanel({ layoutMode = 'dock', collapsed = false, onRequestClose, onToggleCollapse, onProfileReady, onProfilesPending, onTraceReady, onJumpToTab }) {
+function _restoreMessages(history) {
+  return (Array.isArray(history && history.messages) ? history.messages : [])
+    .filter((message) => message && (message.role === 'user' || message.role === 'assistant'))
+    .map((message) => ({
+      role: message.role,
+      content: message.content || '',
+      finalized: true,
+    }));
+}
+
+function _restoreToolCalls(history) {
+  return (Array.isArray(history && history.tool_calls) ? history.tool_calls : []).map((toolCall) => ({
+    tool_call_id: toolCall.tool_call_id,
+    tool_name: toolCall.tool_name,
+    status: toolCall.status === 'done' ? 'ok' : (toolCall.status === 'error' ? 'error' : 'pending'),
+    input: toolCall.input || {},
+    output: toolCall.output || null,
+    progress: Array.isArray(toolCall.progress) ? toolCall.progress : [],
+    startedAtMs: toolCall.started_at ? (Date.parse(toolCall.started_at) || Date.now()) : Date.now(),
+    finishedAtMs: toolCall.finished_at ? (Date.parse(toolCall.finished_at) || Date.now()) : undefined,
+    source: 'history',
+  }));
+}
+
+function ChatPanel({
+  layoutMode = 'dock',
+  collapsed = false,
+  onRequestClose,
+  onToggleCollapse,
+  onProfileReady,
+  onProfilesPending,
+  onTraceReady,
+  onJumpToTab,
+  externalSessionId = '',
+  onSessionChange,
+  workspaceSnapshot = null,
+  onRestoreWorkspaceSession,
+}) {
   const [state, dispatch] = useReducer(chatReducer, chatInitialState);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
@@ -39,12 +76,33 @@ function ChatPanel({ layoutMode = 'dock', collapsed = false, onRequestClose, onT
   const dispatchedProfileResultsRef = useRef(new Set());
   const dispatchedProgressRef = useRef(new Set());
   const pendingNotifiedRef = useRef(new Set());
+  const skipRestoreSessionIdRef = useRef('');
+  const lastHydratedSessionIdRef = useRef('');
   const onProfileReadyRef = useRef(onProfileReady);
   const onProfilesPendingRef = useRef(onProfilesPending);
   const onTraceReadyRef = useRef(onTraceReady);
+  const onSessionChangeRef = useRef(onSessionChange);
+  const onRestoreWorkspaceSessionRef = useRef(onRestoreWorkspaceSession);
   useEffect(() => { onProfileReadyRef.current = onProfileReady; }, [onProfileReady]);
   useEffect(() => { onProfilesPendingRef.current = onProfilesPending; }, [onProfilesPending]);
   useEffect(() => { onTraceReadyRef.current = onTraceReady; }, [onTraceReady]);
+  useEffect(() => { onSessionChangeRef.current = onSessionChange; }, [onSessionChange]);
+  useEffect(() => { onRestoreWorkspaceSessionRef.current = onRestoreWorkspaceSession; }, [onRestoreWorkspaceSession]);
+
+  const resetSessionArtifacts = useCallback(() => {
+    if (esRef.current) esRef.current.close();
+    esRef.current = null;
+    dispatchedToolsRef.current = new Set();
+    dispatchedProfileResultsRef.current = new Set();
+    dispatchedProgressRef.current = new Set();
+    pendingNotifiedRef.current = new Set();
+    setStreaming(false);
+    setIngestedUids([]);
+    setTraceUids([]);
+    setProfileModulesByUid({});
+    setProfileExpectedModulesByUid({});
+    setSelectedJumpUid(null);
+  }, []);
 
   function rememberProfileUid(targetUid) {
     if (!targetUid) return;
@@ -88,6 +146,7 @@ function ChatPanel({ layoutMode = 'dock', collapsed = false, onRequestClose, onT
 
   useEffect(() => {
     state.toolCalls.forEach((t) => {
+      if (t.source !== 'live') return;
       if (t.tool_name !== 'run_profile') return;
       if (pendingNotifiedRef.current.has(t.tool_call_id)) return;
       if (t.status !== 'pending' && t.status !== 'ok' && t.status !== 'error') return;
@@ -105,6 +164,7 @@ function ChatPanel({ layoutMode = 'dock', collapsed = false, onRequestClose, onT
 
   useEffect(() => {
     state.toolCalls.forEach((t) => {
+      if (t.source !== 'live') return;
       if (t.tool_name !== 'run_profile') return;
       const progress = Array.isArray(t.progress) ? t.progress : [];
       progress.forEach((p, idx) => {
@@ -131,6 +191,7 @@ function ChatPanel({ layoutMode = 'dock', collapsed = false, onRequestClose, onT
 
   useEffect(() => {
     state.toolCalls.forEach((t) => {
+      if (t.source !== 'live') return;
       if (t.status !== 'ok' || !t.output) return;
       if (dispatchedToolsRef.current.has(t.tool_call_id)) return;
       if (t.tool_name === 'run_profile' && Array.isArray(t.output.results)) {
@@ -171,35 +232,57 @@ function ChatPanel({ layoutMode = 'dock', collapsed = false, onRequestClose, onT
   }, []);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const sessionId = params.get('session');
-    if (!sessionId) return undefined;
+    const sessionId = externalSessionId;
+    if (!sessionId) {
+      lastHydratedSessionIdRef.current = '';
+      return undefined;
+    }
+    if (skipRestoreSessionIdRef.current === sessionId) {
+      skipRestoreSessionIdRef.current = '';
+      lastHydratedSessionIdRef.current = sessionId;
+      return undefined;
+    }
+    if (lastHydratedSessionIdRef.current === sessionId) return undefined;
     let cancelled = false;
+    dispatch({ type: 'reset_session' });
+    resetSessionArtifacts();
     fetchOrchestratorSession(sessionId).then((history) => {
       if (cancelled) return;
-      dispatch({ type: 'session_started', session_id: sessionId });
-      (history.messages || []).forEach((message) => {
-        if (message.role === 'user') dispatch({ type: 'user_input', content: message.content || '' });
-        if (message.role === 'assistant') dispatch({ type: 'final', final_message: message.content || '', total_rounds: 0, total_tokens: 0, confidence: 1 });
+      lastHydratedSessionIdRef.current = sessionId;
+      dispatch({
+        type: 'restore_session',
+        session_id: sessionId,
+        messages: _restoreMessages(history),
+        tool_calls: _restoreToolCalls(history),
+        final: history && history.final_message ? {
+          final_message: history.final_message,
+          total_rounds: 0,
+          total_tokens: history.total_tokens || 0,
+          confidence: history.confidence || 1,
+        } : null,
       });
     }).catch((err) => {
       if (cancelled) return;
       const msg = String((err && err.message) || err);
       const is404 = msg.includes('404');
       if (is404) {
-        const currentParams = new URLSearchParams(window.location.search);
-        currentParams.delete('session');
-        const next = `${window.location.pathname}${currentParams.toString() ? '?' + currentParams.toString() : ''}${window.location.hash}`;
-        window.history.replaceState({}, '', next);
+        if (onSessionChangeRef.current) {
+          onSessionChangeRef.current('');
+        } else {
+          const currentParams = new URLSearchParams(window.location.search);
+          currentParams.delete('session');
+          const next = `${window.location.pathname}${currentParams.toString() ? '?' + currentParams.toString() : ''}${window.location.hash}`;
+          window.history.replaceState({}, '', next);
+        }
       } else {
         dispatch({ type: 'error', error_type: 'restore', message: msg });
       }
     });
     return () => { cancelled = true; };
-  }, []);
+  }, [externalSessionId, resetSessionArtifacts]);
 
   useEffect(() => {
-    if (!state.sessionId) return;
+    if (!state.sessionId || onSessionChangeRef.current) return;
     const params = new URLSearchParams(window.location.search);
     if (params.get('session') !== state.sessionId || params.get('tab') !== 'chat') {
       params.set('session', state.sessionId);
@@ -209,7 +292,7 @@ function ChatPanel({ layoutMode = 'dock', collapsed = false, onRequestClose, onT
   }, [state.sessionId]);
 
   useEffect(() => {
-    const hasPending = state.toolCalls.some((t) => t.status === 'pending');
+    const hasPending = state.toolCalls.some((t) => t.source === 'live' && t.status === 'pending');
     if (!hasPending) return;
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
@@ -221,20 +304,25 @@ function ChatPanel({ layoutMode = 'dock', collapsed = false, onRequestClose, onT
     setInput('');
     dispatch({ type: 'user_input', content });
     setStreaming(true);
+    const compactWorkspaceSnapshot = workspaceSnapshot && Array.isArray(workspaceSnapshot.results) && workspaceSnapshot.results.length
+      ? workspaceSnapshot
+      : undefined;
     try {
       if (!state.sessionId) {
-        const payload = await createOrchestratorSession(content);
+        const payload = await createOrchestratorSession(content, compactWorkspaceSnapshot);
         dispatch({ type: 'session_started', session_id: payload.session_id });
+        skipRestoreSessionIdRef.current = payload.session_id;
+        if (onSessionChangeRef.current) onSessionChangeRef.current(payload.session_id);
         startStream(payload.session_id);
       } else {
-        await sendOrchestratorMessage(state.sessionId, content);
+        await sendOrchestratorMessage(state.sessionId, content, compactWorkspaceSnapshot);
         if (!esRef.current || esRef.current.readyState === 2) startStream(state.sessionId);
       }
     } catch (err) {
       dispatch({ type: 'error', error_type: 'send', message: String((err && err.message) || err) });
       setStreaming(false);
     }
-  }, [input, state.sessionId, startStream]);
+  }, [input, startStream, state.sessionId, workspaceSnapshot]);
 
   const onApprove = useCallback(async () => {
     if (!state.pendingAck || !state.sessionId) return;
@@ -277,6 +365,38 @@ function ChatPanel({ layoutMode = 'dock', collapsed = false, onRequestClose, onT
     setMemoryOpen(true);
   }
 
+  const onOpenSession = useCallback((sessionId) => {
+    if (!sessionId) return;
+    setMemoryOpen(false);
+    const currentSessionId = externalSessionId || state.sessionId || '';
+    if (sessionId === currentSessionId) return;
+    if (esRef.current) {
+      esRef.current.close();
+      esRef.current = null;
+      setStreaming(false);
+    }
+    if (onSessionChangeRef.current) {
+      onSessionChangeRef.current(sessionId);
+      return;
+    }
+    const params = new URLSearchParams(window.location.search);
+    params.set('session', sessionId);
+    params.set('tab', 'chat');
+    window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}${window.location.hash}`);
+  }, [externalSessionId, state.sessionId]);
+
+  const onRestoreSession = useCallback(async (sessionId) => {
+    if (!sessionId) return;
+    const currentSessionId = externalSessionId || state.sessionId || '';
+    if (sessionId !== currentSessionId) {
+      onOpenSession(sessionId);
+    }
+    if (!onRestoreWorkspaceSessionRef.current) return;
+    const history = await fetchOrchestratorSession(sessionId);
+    onRestoreWorkspaceSessionRef.current(history);
+    setMemoryOpen(false);
+  }, [externalSessionId, onOpenSession, state.sessionId]);
+
   const jumpUids = ingestedUids.length > 0 ? ingestedUids : traceUids;
   const selectedDashboardUid = jumpUids.includes(selectedJumpUid) ? selectedJumpUid : jumpUids[0];
   const canJumpTrace = selectedDashboardUid ? traceUids.includes(selectedDashboardUid) : false;
@@ -309,7 +429,12 @@ function ChatPanel({ layoutMode = 'dock', collapsed = false, onRequestClose, onT
             </button>
           </div>
         </header>
-        <MemoryInspector open={memoryOpen} onClose={() => setMemoryOpen(false)} />
+        <MemoryInspector
+          open={memoryOpen}
+          onClose={() => setMemoryOpen(false)}
+          onOpenSession={onOpenSession}
+          onRestoreSession={onRestoreSession}
+        />
       </div>
     );
   }
@@ -463,7 +588,12 @@ function ChatPanel({ layoutMode = 'dock', collapsed = false, onRequestClose, onT
         <p className="mt-2 text-center text-[10px] text-slate-400">AI 助手可能会犯错，请结合左侧结构化结果核实。</p>
       </div>
 
-      <MemoryInspector open={memoryOpen} onClose={() => setMemoryOpen(false)} />
+      <MemoryInspector
+        open={memoryOpen}
+        onClose={() => setMemoryOpen(false)}
+        onOpenSession={onOpenSession}
+        onRestoreSession={onRestoreSession}
+      />
     </div>
   );
 }

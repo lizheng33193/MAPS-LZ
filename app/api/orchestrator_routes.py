@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import threading
-from typing import AsyncGenerator, Optional
+from typing import Any, AsyncGenerator, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -80,12 +80,16 @@ async def chat_endpoint(req: OrchestratorChatRequest, request: Request) -> Strea
 
 class _CreateSessionBody(BaseModel):
     initial_message: Optional[str] = None
+    workspace_snapshot: Optional[dict[str, Any]] = None
 
 
 @router.post("/sessions")
 async def create_session_endpoint(body: _CreateSessionBody, request: Request) -> dict:
     identity = _identity_from_request(request)
     sess = create_session(**identity)
+    if body.workspace_snapshot:
+        sess.active_entities["workspace_snapshot"] = body.workspace_snapshot
+        save_session(sess)
     if body.initial_message:
         _set_pending_prompt(sess.session_id, body.initial_message)
     return {
@@ -125,6 +129,7 @@ async def list_sessions_endpoint(
 
 class _SendMessageBody(BaseModel):
     content: str
+    workspace_snapshot: Optional[dict[str, Any]] = None
 
 
 @router.post("/sessions/{session_id}/messages")
@@ -133,6 +138,9 @@ async def send_message_endpoint(session_id: str, body: _SendMessageBody, request
     if sess is None:
         raise HTTPException(404, f"Session {session_id} not found")
     _apply_request_identity(sess, request)
+    if body.workspace_snapshot:
+        sess.active_entities["workspace_snapshot"] = body.workspace_snapshot
+        save_session(sess)
     _set_pending_prompt(session_id, body.content)
     return {"ok": True}
 

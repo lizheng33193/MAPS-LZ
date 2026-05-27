@@ -381,6 +381,10 @@ function DashboardView({
   onCountryChange,
   chatFocusRequested = false,
   onChatFocusChange,
+  chatSessionId = '',
+  onChatSessionChange,
+  chatWorkspaceSnapshot = null,
+  onRestoreWorkspaceSession,
 }) {
   const selectedResult = analysisResults[selectedResultIndex] || FALLBACK_RESULT_DASHBOARD;
   const uid = selectedResult.uid || 'unknown_user';
@@ -795,6 +799,10 @@ function DashboardView({
             onProfileReady={onChatProfileReady}
             onProfilesPending={onChatProfilesPending}
             onTraceReady={onChatTraceReady}
+            externalSessionId={chatSessionId}
+            onSessionChange={onChatSessionChange}
+            workspaceSnapshot={chatWorkspaceSnapshot}
+            onRestoreWorkspaceSession={onRestoreWorkspaceSession}
             onJumpToTab={(tabId, targetUid) => {
               setActiveTab(tabId);
               if (targetUid) {
