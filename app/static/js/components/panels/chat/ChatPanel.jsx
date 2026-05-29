@@ -2,6 +2,7 @@ const {
   ChatMessageList,
   ChatInputBox,
   ChatToolCallStream,
+  ChatExecutionTraceCard,
   ChatAckCard,
   ChatBudgetBanner,
   ChatProviderFallbackBanner,
@@ -9,7 +10,7 @@ const {
   chatReducer,
   chatInitialState,
 } = window.AppComponents;
-const { createOrchestratorSession, sendOrchestratorMessage, openOrchestratorStream, ackOrchestratorTool, fetchOrchestratorSession } = window.AppServices.api;
+const { createOrchestratorSession, sendOrchestratorMessage, openOrchestratorStream, ackOrchestratorTool, resolveOrchestratorStep, fetchOrchestratorSession } = window.AppServices.api;
 const { Bot, Clock3, PanelRightClose, X } = window.LucideReact || {};
 const { useReducer, useState, useRef, useEffect, useCallback } = React;
 
@@ -47,6 +48,18 @@ function _restoreToolCalls(history) {
   }));
 }
 
+function _restoreExecutionTraces(history) {
+  return (Array.isArray(history && history.execution_traces) ? history.execution_traces : []).map((trace) => ({
+    execution_id: trace.execution_id,
+    request_summary: trace.request_summary || '',
+    intent: trace.intent || '',
+    request_understanding: trace.request_understanding || null,
+    availability: trace.availability || null,
+    steps: Array.isArray(trace.steps) ? trace.steps : [],
+    review: trace.review || null,
+  }));
+}
+
 function ChatPanel({
   layoutMode = 'dock',
   collapsed = false,
@@ -65,6 +78,7 @@ function ChatPanel({
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [memoryOpen, setMemoryOpen] = useState(false);
+  const [clarificationDraft, setClarificationDraft] = useState({ country: 'mx', time_window: '最近 7 天', auto_profile: true });
   const [ingestedUids, setIngestedUids] = useState([]);
   const [traceUids, setTraceUids] = useState([]);
   const [profileModulesByUid, setProfileModulesByUid] = useState({});
@@ -254,6 +268,7 @@ function ChatPanel({
         session_id: sessionId,
         messages: _restoreMessages(history),
         tool_calls: _restoreToolCalls(history),
+        execution_traces: _restoreExecutionTraces(history),
         final: history && history.final_message ? {
           final_message: history.final_message,
           total_rounds: 0,
@@ -342,6 +357,34 @@ function ChatPanel({
     }
   }, [state.pendingAck, state.sessionId]);
 
+  const onSubmitClarification = useCallback(async (answers) => {
+    if (!state.pendingResolution || !state.sessionId) return;
+    try {
+      await resolveOrchestratorStep(state.sessionId, {
+        execution_id: state.pendingResolution.execution_id,
+        step_id: state.pendingResolution.step_id,
+        resolution_type: state.pendingResolution.resolution_type,
+        answers,
+      });
+    } catch (err) {
+      dispatch({ type: 'error', error_type: 'resolve', message: String((err && err.message) || err) });
+    }
+  }, [state.pendingResolution, state.sessionId]);
+
+  const onSelectResolutionOption = useCallback(async (selectedOption) => {
+    if (!state.pendingResolution || !state.sessionId) return;
+    try {
+      await resolveOrchestratorStep(state.sessionId, {
+        execution_id: state.pendingResolution.execution_id,
+        step_id: state.pendingResolution.step_id,
+        resolution_type: state.pendingResolution.resolution_type,
+        selected_option: selectedOption,
+      });
+    } catch (err) {
+      dispatch({ type: 'error', error_type: 'resolve', message: String((err && err.message) || err) });
+    }
+  }, [state.pendingResolution, state.sessionId]);
+
   useEffect(() => {
     if (!state.pendingAck) return undefined;
     const handler = (event) => {
@@ -360,6 +403,17 @@ function ChatPanel({
   useEffect(() => () => {
     if (esRef.current) esRef.current.close();
   }, []);
+
+  useEffect(() => {
+    if (!state.pendingResolution || state.pendingResolution.resolution_type !== 'clarification') return;
+    setClarificationDraft({
+      country: (state.pendingResolution.candidate_defaults && state.pendingResolution.candidate_defaults.country) || 'mx',
+      time_window: (state.pendingResolution.candidate_defaults && state.pendingResolution.candidate_defaults.time_window) || '最近 7 天',
+      auto_profile: state.pendingResolution.candidate_defaults
+        ? state.pendingResolution.candidate_defaults.auto_profile !== false
+        : true,
+    });
+  }, [state.pendingResolution]);
 
   function onOpenMemory() {
     setMemoryOpen(true);
@@ -502,8 +556,15 @@ function ChatPanel({
 
             <div className="space-y-4">
               <ChatMessageList messages={state.messages} />
+              {Array.isArray(state.executionTraces) && state.executionTraces.length > 0 ? (
+                <div className="space-y-3">
+                  {state.executionTraces.map((trace) => (
+                    <ChatExecutionTraceCard key={trace.execution_id || trace.request_summary} trace={trace} />
+                  ))}
+                </div>
+              ) : null}
               <ChatToolCallStream toolCalls={state.toolCalls} now={now} />
-              {streaming && !state.pendingAck ? (() => {
+              {streaming && !state.pendingAck && !state.pendingResolution ? (() => {
                 const pendingProfile = state.toolCalls.find((t) => t.tool_name === 'run_profile' && t.status === 'pending');
                 let label = 'AI 正在思考，可能需要 30~60 秒...';
                 if (pendingProfile) {
@@ -528,6 +589,78 @@ function ChatPanel({
             </div>
 
             <ChatAckCard pending={state.pendingAck} onApprove={onApprove} onReject={onReject} />
+            {state.pendingResolution ? (
+              <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3">
+                <div className="text-sm font-semibold text-blue-800">
+                  {state.pendingResolution.resolution_type === 'repair_strategy' ? '请选择本次 cohort 的补数策略' : '请先补充执行条件'}
+                </div>
+                <div className="mt-1 text-xs leading-5 text-blue-700">
+                  {state.pendingResolution.prompt || '请补充完成当前执行所需的信息。'}
+                </div>
+                {state.pendingResolution.resolution_type === 'clarification' ? (
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <label className="flex flex-col gap-1 text-xs font-medium text-blue-800">
+                      国家
+                      <select
+                        value={clarificationDraft.country}
+                        onChange={(e) => setClarificationDraft((prev) => ({ ...prev, country: e.target.value }))}
+                        className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-blue-400"
+                      >
+                        <option value="mx">墨西哥 (MX)</option>
+                        <option value="th">泰国 (TH)</option>
+                        <option value="co">哥伦比亚 (CO)</option>
+                        <option value="pe">秘鲁 (PE)</option>
+                        <option value="cl">智利 (CL)</option>
+                        <option value="br">巴西 (BR)</option>
+                      </select>
+                    </label>
+                    <label className="flex flex-col gap-1 text-xs font-medium text-blue-800">
+                      时间范围
+                      <select
+                        value={clarificationDraft.time_window}
+                        onChange={(e) => setClarificationDraft((prev) => ({ ...prev, time_window: e.target.value }))}
+                        className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-blue-400"
+                      >
+                        <option value="最近 7 天">最近 7 天</option>
+                        <option value="最近 14 天">最近 14 天</option>
+                        <option value="最近 30 天">最近 30 天</option>
+                      </select>
+                    </label>
+                    <label className="sm:col-span-2 inline-flex items-center gap-2 text-xs font-medium text-blue-800">
+                      <input
+                        type="checkbox"
+                        checked={!!clarificationDraft.auto_profile}
+                        onChange={(e) => setClarificationDraft((prev) => ({ ...prev, auto_profile: e.target.checked }))}
+                      />
+                      自动继续画像
+                    </label>
+                    <div className="sm:col-span-2 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onSubmitClarification(clarificationDraft)}
+                        className="rounded-lg border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 transition-colors hover:bg-blue-100"
+                      >
+                        提交澄清条件
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+                {state.pendingResolution.resolution_type === 'repair_strategy' ? (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {(state.pendingResolution.options || []).map((option) => (
+                      <button
+                        key={option}
+                        type="button"
+                        onClick={() => onSelectResolutionOption(option)}
+                        className="rounded-lg border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 transition-colors hover:bg-blue-100"
+                      >
+                        {option}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
 
             {jumpUids.length > 0 && onJumpToTab ? (
               <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
@@ -584,7 +717,7 @@ function ChatPanel({
       </div>
 
       <div id="chat-panel-footer" className="shrink-0 border-t border-slate-100 bg-white p-4">
-        <ChatInputBox value={input} onChange={setInput} onSend={onSend} disabled={streaming || !!state.pendingAck} />
+        <ChatInputBox value={input} onChange={setInput} onSend={onSend} disabled={streaming || !!state.pendingAck || !!state.pendingResolution} />
         <p className="mt-2 text-center text-[10px] text-slate-400">AI 助手可能会犯错，请结合左侧结构化结果核实。</p>
       </div>
 

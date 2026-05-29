@@ -113,11 +113,35 @@ def test_chat_panel_uses_memory_drawer_instead_of_inline_block() -> None:
 def test_chat_panel_wires_profile_progress_and_safe_success_copy() -> None:
     src = CHAT_PANEL.read_text(encoding="utf-8")
     assert "tool_progress" in (REPO / "app" / "static" / "js" / "components" / "panels" / "chat" / "chatReducer.js").read_text(encoding="utf-8")
+    assert "execution_plan" in (REPO / "app" / "static" / "js" / "components" / "panels" / "chat" / "chatReducer.js").read_text(encoding="utf-8")
+    assert "ChatExecutionTraceCard" in src
     assert "profile_module_completed" in src
     assert "dispatchProfileRow" in src
     assert "完整画像已生成" in src
     assert "画像分析进行中" in src
     assert "可查看完整 dashboard" not in src
+
+
+def test_chat_panel_restores_request_understanding_and_trace_card_uses_explanation_blocks() -> None:
+    panel_src = CHAT_PANEL.read_text(encoding="utf-8")
+    trace_card_src = (REPO / "app" / "static" / "js" / "components" / "panels" / "chat" / "ChatExecutionTraceCard.jsx").read_text(encoding="utf-8")
+
+    assert "request_understanding: trace.request_understanding || null" in panel_src
+    assert "需求理解" in trace_card_src
+    assert "路径说明" in trace_card_src
+    assert "为什么这样做" in trace_card_src
+    assert "观察结果" in trace_card_src
+
+
+def test_chat_panel_clarification_uses_editable_form_and_resolution_controls() -> None:
+    src = CHAT_PANEL.read_text(encoding="utf-8")
+
+    assert "time_window" in src
+    assert "auto_profile" in src
+    assert "国家" in src
+    assert "时间范围" in src
+    assert "自动继续画像" in src
+    assert "使用默认国家 + 最近 7 天" not in src
 
 
 def test_memory_inspector_separates_session_history_and_long_term_memory() -> None:

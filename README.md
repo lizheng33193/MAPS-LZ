@@ -47,10 +47,14 @@
 
 - 创建、恢复和列出 chat session
 - SSE 流式返回 agent 执行过程
+- 以 visible execution 形式返回计划、执行步骤、review 和最终结论
 - 通过工具调用画像、查询数据、运行 trace、解析 UID 文件
+- cohort 场景下先做 clarification / resolution，再决定是否继续 query 或画像
+- clarification 中若关闭 `auto_profile`，会在同一 execution 内只做 `query_data` 并直接返回 UID 列表与 SQL/行数信息
 - 在同一 session 内保留短期上下文
 - 通过 SQLite + FTS5 保存可跨 session 召回的长期记忆
 - 对高风险 `query_data` 流程做“生成 artifact → 等待人工确认 → 执行”分步控制
+- 当 Data Acquisition 不可用时，query/repair 相关步骤会以 `data_acquisition_unavailable` 明确阻断或降级，而不是静默失败
 - 使用 Memory Inspector 在前端查看、搜索、新增、编辑、归档、恢复、软删除记忆
 
 ### 1.3 Data Acquisition 能力
@@ -62,6 +66,10 @@
 - 对审核通过的 SQL 进行受控执行
 - 将查询结果切片写回 `data/app|behavior|credit/by_uid`
 - 作为主画像链路的上游数据准备能力使用
+- 通过 `DATA_ACQUISITION_ENABLED` 做 tri-state capability gating：
+  - 未设置：`auto`，依赖存在则挂载 `/api/data-acquisition/*`，缺依赖时跳过并在 Chat/repair 路径中明确 blocked
+  - `false`：显式禁用，不挂载 Data Acquisition router，query/repair 统一不可用
+  - `true`：显式要求启用，依赖缺失时启动直接报错
 
 它不是 Runtime SkillRegistry 里的一个 skill，更接近“业务 Stage 0”。
 
@@ -380,8 +388,11 @@ sequenceDiagram
 - `/api/orchestrator/sessions` 创建 session，可带 `initial_message`
 - `/api/orchestrator/sessions/{id}/messages` 只把下一轮 prompt 放入 pending slot
 - `/api/orchestrator/sessions/{id}/stream` 才真正触发 `run_agent_loop()` 并返回 SSE
+- `/api/orchestrator/sessions/{id}/resolve` 用于 clarification / repair strategy 等待态回传答案，继续同一 execution
 - `agent_loop.py` 每轮会拼接 system prompt、国别 skill、rolling summary、retrieved memories 和对话历史
 - `query_data` 在 agent loop 内走特殊 ACK 分支：先生成 artifact，再等待确认，再决定是否执行
+- clarification 卡当前至少支持 `country / time_window / auto_profile`；当 `auto_profile=false` 时，cohort 流程只执行 `query_data`，不再进入 availability / repair / run_profile
+- direct profile 缺 bucket 且 Data Acquisition 不可用时，不再生成误导性的 `repair_*` step，而是进入独立 `data_acquisition_unavailable` 步骤，并根据已有 bucket 决定 partial profile 或 blocked
 - `memory_write` / `memory_read` 工具名保留兼容，但内部已经接 SQLite store
 - session 存储、pending prompt、ACK bus 当前都是 process-local，本质是单实例开发方案
 
@@ -424,6 +435,7 @@ sequenceDiagram
 - `execute` 只接受审核后的请求，并且当前只支持 `query_only` SQL
 - 执行前会做凭据扫描、危险代码扫描、DDL/DML policy 检查、行数预检
 - `output_writer.py` 负责把结果切片成画像可消费的 per-uid 文件
+- `/api/data-acquisition/*` 是否挂载取决于 `DATA_ACQUISITION_ENABLED` 和当前环境依赖是否可导入，不再假设所有环境都永远暴露该路由
 
 ### 3.12 前端组织方式
 
@@ -1070,6 +1082,7 @@ curl http://127.0.0.1:8000/api/trace/824812551379353600
 - `POST /api/orchestrator/sessions/{session_id}/messages`
 - `GET /api/orchestrator/sessions/{session_id}/stream`
 - `POST /api/orchestrator/sessions/{session_id}/ack`
+- `POST /api/orchestrator/sessions/{session_id}/resolve`
 - `GET /api/orchestrator/sessions/{session_id}`
 
 典型时序：
@@ -1077,7 +1090,8 @@ curl http://127.0.0.1:8000/api/trace/824812551379353600
 1. `POST /sessions` 创建会话
 2. `POST /sessions/{id}/messages` 填入下一轮 prompt
 3. `GET /sessions/{id}/stream` 真正触发 agent loop 并订阅 SSE
-4. 如遇 `query_data` 待确认事件，再调用 `/ack`
+4. 如遇 clarification / repair strategy 等待卡片，通过 `/resolve` 回传答案并继续同一 execution
+5. 如遇 `query_data` 待确认事件，再调用 `/ack`
 
 ### 7.4 Memory 调试与管理接口
 
@@ -1126,17 +1140,17 @@ curl -X POST http://127.0.0.1:8000/api/orchestrator/memory \
 
 - `POST /api/data-acquisition/generate`
 - `POST /api/data-acquisition/execute`
-
-当前保留但尚未实现：
-
 - `GET /api/data-acquisition/manifests`
 - `GET /api/data-acquisition/healthz`
 
 说明：
 
+- 这些接口只有在 Data Acquisition capability 可用时才会挂载
 - `generate` 产出待审核 artifact
 - `execute` 只执行审核通过的请求
 - 当前 execute 主路径只支持 `query_only` SQL
+- `manifests` 用于调试查看当前已注册 country manifest
+- `healthz` 用于 liveness / import probe
 
 ## 8. 本地数据目录规范
 
@@ -1228,6 +1242,7 @@ MODEL_NAME=gemini-2.5-flash
 GEMINI_API_KEY=your-gemini-api-key-here
 DATA_SOURCE=local
 LOG_LEVEL=INFO
+DATA_ACQUISITION_ENABLED=
 ```
 
 如需使用 Vertex：
@@ -1273,6 +1288,8 @@ CREDIT_BY_UID_DIR=data/credit/by_uid
 | 数据 | `DATA_SOURCE` | 数据来源 | `local`、`warehouse` |
 | 数据 | `DATA_DIR` | 本地数据根目录 | `data` |
 | 数据 | `APP_*` / `BEHAVIOR_*` / `CREDIT_*` | 各模块 source/by_uid 目录 | `data/app/by_uid` 等 |
+| Data Acquisition | `DATA_ACQUISITION_ENABLED` | Data Acquisition capability 模式 | 未设置=`auto`、`false`=`disabled`、`true`=`required` |
+| Data Acquisition | `DA_MAX_RESULT_ROWS` / `DA_QUERY_TIMEOUT_SECONDS` / `DA_CONNECTION_PROFILE` | 受控执行非敏感配置 | `100000`、`60`、`default` |
 | Memory | `MEMORY_ENABLED` | 总开关 | `1` / `0` |
 | Memory | `LONG_TERM_MEMORY_ENABLED` | 长期记忆召回开关 | `1` / `0` |
 | Memory | `MEMORY_WRITE_ENABLED` | 长期记忆写入开关 | `1` / `0` |
@@ -1369,6 +1386,8 @@ http://127.0.0.1:8000/
 | --- | --- | --- |
 | 正常开发 | `uvicorn app.main:app --reload` | 自动 reload，适合改后端和前端 JSX |
 | 无模型联调 | `MODEL_MODE=mock uvicorn app.main:app --reload` | 适合 UI/API/store 开发 |
+| 禁用 Data Acquisition | `DATA_ACQUISITION_ENABLED=false uvicorn app.main:app --reload` | 验证 query/repair blocked 与无 DA router 模式 |
+| 强制要求 Data Acquisition | `DATA_ACQUISITION_ENABLED=true uvicorn app.main:app --reload` | 缺依赖时启动直接失败，适合部署前检查 |
 | 指定端口 | `uvicorn app.main:app --reload --port 8013` | 8000 被占用时使用 |
 | 临时隔离 Memory DB | `MEMORY_DB_PATH=/tmp/test-memory.sqlite3 uvicorn app.main:app --reload` | 不污染默认 `outputs/memory/memory.sqlite3` |
 | 关闭长期记忆 | `LONG_TERM_MEMORY_ENABLED=0 uvicorn app.main:app --reload` | 验证无长期记忆模式 |
@@ -1404,12 +1423,15 @@ python -m pytest tests -q
 python -m pytest tests/orchestrator_agent -q
 ```
 
-### 12.3 前端 Chat 与路由回归
+### 12.3 Visible Execution、前端 Chat 与路由回归
 
 ```bash
 python -m pytest \
+  tests/test_orchestrator_visible_execution.py \
+  tests/test_orchestrator_golden.py \
   tests/frontend/test_chat_phase3_capabilities.py \
   tests/frontend/test_chat_skeleton.py \
+  tests/test_orchestrator_phase3.py \
   tests/test_orchestrator_chat_routes.py \
   -q
 ```
@@ -1481,8 +1503,8 @@ python -m pytest tests data_acquisition_agent/tests -q
 | --- | --- | --- | --- |
 | 主画像与路由 | `python -m pytest tests -q` | 视具体 case 而定 | 否或临时路径 |
 | Memory store/policy/context/agent loop | `python -m pytest tests/orchestrator_agent -q` | 否 | 否，测试用临时 DB |
-| Chat 前端结构和 API helper | `python -m pytest tests/frontend/test_chat_phase3_capabilities.py tests/frontend/test_chat_skeleton.py -q` | 否 | 否 |
-| Orchestrator route 回归 | `python -m pytest tests/test_orchestrator_chat_routes.py -q` | 否 | 否 |
+| Visible execution / golden / Chat 前端 | `python -m pytest tests/test_orchestrator_visible_execution.py tests/test_orchestrator_golden.py tests/frontend/test_chat_phase3_capabilities.py tests/frontend/test_chat_skeleton.py -q` | 否，mock 模式即可 | 否 |
+| Orchestrator route / phase3 回归 | `python -m pytest tests/test_orchestrator_chat_routes.py tests/test_orchestrator_phase3.py -q` | 否 | 否 |
 | Data Acquisition | `python -m pytest data_acquisition_agent/tests -q` | 否，少量 real LLM case 可 skip | 否 |
 | Memory 离线评估 | `python -m tests.golden.memory_eval --dataset tests/fixtures/golden/memory/eval_set.json --no-report` | 否 | 否，临时 DB |
 | Memory live E2E | `python scripts/memory_e2e_live.py --base-url http://127.0.0.1:8000` | 是，推荐真实模型 | 是，除非启动服务时指定 `MEMORY_DB_PATH` |

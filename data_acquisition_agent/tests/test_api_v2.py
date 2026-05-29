@@ -70,3 +70,27 @@ def test_execute_invalid_country_422():
     r = _client().post("/api/data-acquisition/execute",
         json={**_req(), "target_country":"atlantis"})
     assert r.status_code == 422  # Pydantic enum 校验
+
+def test_api_module_imports_without_execute_dependencies(monkeypatch):
+    import builtins
+    import importlib
+    import sys
+
+    original_import = builtins.__import__
+
+    def _patched_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name in {"data_acquisition_agent.connection", "data_acquisition_agent.executor"}:
+            raise ModuleNotFoundError(name)
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", _patched_import)
+    for mod in [
+        "data_acquisition_agent.api",
+        "data_acquisition_agent.connection",
+        "data_acquisition_agent.executor",
+    ]:
+        sys.modules.pop(mod, None)
+
+    mod = importlib.import_module("data_acquisition_agent.api")
+
+    assert hasattr(mod, "router")

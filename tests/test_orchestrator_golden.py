@@ -8,6 +8,7 @@ Plan #03 [complete] 后再做 5-10 次手工对齐校准（独立迭代，非本
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 from pathlib import Path
 
@@ -15,6 +16,33 @@ import pytest
 
 
 GOLDEN_DIR = Path(__file__).parent / "golden"
+
+# Data Agent capability test convention:
+# - fake query_data / repair success paths must patch capability as enabled
+# - unavailable behavior tests must set DATA_ACQUISITION_ENABLED=false or patch disabled capability
+# - fake Data Agent tests must not depend on local DA dependencies being installed
+
+
+def _patch_enabled_data_acquisition(monkeypatch):
+    from app.core.data_acquisition_capability import DataAcquisitionCapability
+
+    cap = DataAcquisitionCapability(mode="auto", enabled=True, reason=None)
+    monkeypatch.setattr(
+        importlib.import_module("app.services.orchestrator_agent.agent_loop"),
+        "get_data_acquisition_capability",
+        lambda: cap,
+    )
+    monkeypatch.setattr(
+        importlib.import_module("app.services.orchestrator_agent.repair_profile_data"),
+        "get_data_acquisition_capability",
+        lambda: cap,
+    )
+    monkeypatch.setattr(
+        importlib.import_module("app.services.orchestrator_agent.tools.query_data"),
+        "get_data_acquisition_capability",
+        lambda: cap,
+    )
+    return cap
 
 
 def _build_mock_decisions(case: dict) -> list[dict]:
@@ -170,8 +198,35 @@ def test_golden_case(case_path, monkeypatch):
         lambda inp: _mk_output("run_trace"),
     )
 
+    if "run_profile" in case["expected_tools"]:
+        from app.services.orchestrator_agent.schemas import (
+            BucketAvailability,
+            DataAvailability,
+            UidAvailability,
+        )
+
+        monkeypatch.setattr(
+            "app.services.orchestrator_agent.agent_loop.check_data_availability",
+            lambda uids, country=None: DataAvailability(
+                country=country,
+                checked_uids=list(uids),
+                per_uid=[
+                    UidAvailability(
+                        uid=str(uid),
+                        app=BucketAvailability(status="available", available=True, usable_for_profile=True, source_type="csv", path="/tmp/app.csv"),
+                        behavior=BucketAvailability(status="available", available=True, usable_for_profile=True, source_type="csv", path="/tmp/behavior.csv"),
+                        credit=BucketAvailability(status="available", available=True, usable_for_profile=True, source_type="csv", path="/tmp/credit.csv"),
+                        available_buckets=["app", "behavior", "credit"],
+                        missing_buckets=[],
+                    )
+                    for uid in uids
+                ],
+            ),
+        )
+
     # query_data ACK 分支：mock _ChildAgent + auto-resolve ACK
     if "query_data" in case["expected_tools"]:
+        _patch_enabled_data_acquisition(monkeypatch)
         from unittest.mock import MagicMock
         mock_qr = MagicMock()
         mock_qr.sql_text = "SELECT uid FROM users LIMIT 10"

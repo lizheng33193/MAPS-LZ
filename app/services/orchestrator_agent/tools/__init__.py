@@ -1,28 +1,41 @@
-"""Orchestrator Agent tools registry.
+"""Orchestrator Agent tools registry with lazy imports.
 
-V1 注册 6 个工具入口。memory_write / memory_read 是 V1 minimal 实装（本地 JSON 写盘），
-其它 4 工具在 Task 1.4-1.5 实装；Task 1.3 阶段 4 工具均为 NotImplementedError stub。
+Keep tool loading lightweight so generic orchestrator imports do not pull in
+optional Data Agent execution dependencies unless `query_data` is actually used.
 """
 
-from app.services.orchestrator_agent.tools.parse_uid_file import parse_uid_file
-from app.services.orchestrator_agent.tools.run_profile import run_profile
-from app.services.orchestrator_agent.tools.run_trace import run_trace
-from app.services.orchestrator_agent.tools.query_data import query_data
-from app.services.orchestrator_agent.tools.memory import memory_write, memory_read
+from __future__ import annotations
 
-__all__ = [
-    "parse_uid_file", "run_profile", "run_trace",
-    "query_data", "memory_write", "memory_read",
-    "get_tool_registry",
-]
+import importlib
+import sys
+from typing import Any
 
 
-def get_tool_registry() -> dict:
+_TOOL_EXPORTS = {
+    "parse_uid_file": "app.services.orchestrator_agent.tools.parse_uid_file",
+    "run_profile": "app.services.orchestrator_agent.tools.run_profile",
+    "run_trace": "app.services.orchestrator_agent.tools.run_trace",
+    "query_data": "app.services.orchestrator_agent.tools.query_data",
+    "memory_write": "app.services.orchestrator_agent.tools.memory",
+    "memory_read": "app.services.orchestrator_agent.tools.memory",
+}
+
+__all__ = [*list(_TOOL_EXPORTS.keys()), "get_tool_registry"]
+
+
+def __getattr__(name: str) -> Any:
+    module_path = _TOOL_EXPORTS.get(name)
+    if not module_path:
+        raise AttributeError(name)
+    module = importlib.import_module(module_path)
+    value = getattr(module, name)
+    globals()[name] = value
+    return value
+
+
+def get_tool_registry() -> dict[str, Any]:
+    current_module = sys.modules[__name__]
     return {
-        "parse_uid_file": parse_uid_file,
-        "run_profile": run_profile,
-        "run_trace": run_trace,
-        "query_data": query_data,
-        "memory_write": memory_write,
-        "memory_read": memory_read,
+        name: getattr(current_module, name)
+        for name in _TOOL_EXPORTS
     }

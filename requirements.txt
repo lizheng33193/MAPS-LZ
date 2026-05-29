@@ -8,6 +8,7 @@ python-multipart>=0.0.12
 google-genai>=1.0.0,<2.0
 pyyaml>=6.0,<7.0
 pymysql>=1.1.0,<2.0
+tenacity>=8.0,<10.0
 # Plan 07 (KB router) — BM25 + Chinese tokenizer
 rank-bm25==0.2.2
 jieba>=0.42.1

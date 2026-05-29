@@ -54,6 +54,7 @@ LOAD_ORDER = [
     "js/components/panels/trace/TracePanel.jsx",
     "js/components/panels/chat/ChatMessageList.jsx",
     "js/components/panels/chat/ChatInputBox.jsx",
+    "js/components/panels/chat/ChatExecutionTraceCard.jsx",
     "js/components/panels/chat/ChatToolCallStream.jsx",
     "js/components/panels/chat/ChatAckCard.jsx",
     "js/components/panels/chat/ChatBudgetBanner.jsx",

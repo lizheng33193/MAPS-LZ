@@ -121,11 +121,11 @@ def run_execute_pipeline(request: ExecuteRequest, *, request_id: str) -> dict:
         df = execute_query(conn=conn, approved_sql=request.approved_sql,
             timeout_s=settings.da_query_timeout_seconds,
             request_id=request_id)
-    validate_bucket_schema(df, output_bucket=request.output_bucket,
+    actual_uid_column = validate_bucket_schema(df, output_bucket=request.output_bucket,
         output_format=request.output_format, uid_column=request.uid_column,
         request_id=request_id)
     items = build_per_uid_payloads(df, output_bucket=request.output_bucket,
-        output_format=request.output_format, uid_column=request.uid_column,
+        output_format=request.output_format, uid_column=actual_uid_column,
         approved_by=request.approved_by,
         source_request_id=request.source_request_id,
         executed_at=executed_at, request_id=request_id)
@@ -135,7 +135,8 @@ def run_execute_pipeline(request: ExecuteRequest, *, request_id: str) -> dict:
         output_format=request.output_format, overwrite=request.overwrite,
         request_id=request_id)
     duration_ms = int((time.monotonic() - t0) * 1000)
-    rows_per_uid = {uid: int((df[request.uid_column] == uid).sum())
+    uid_series = df[actual_uid_column].fillna("").astype(str).str.strip()
+    rows_per_uid = {uid: int((uid_series == str(uid).strip()).sum())
                      for uid, _ in items}
     return {
         "request_id": request_id,

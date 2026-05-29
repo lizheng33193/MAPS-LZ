@@ -43,8 +43,70 @@
 - [x] Memory recovery audit → 确认 Memory 管理/评估功能仍在，恢复本地 `.env/key.json/data` 运行文件，并记录不可恢复的本地 SQLite runtime state（2026-05-25，docs/reviews/memory-recovery-audit-2026-05-25.md）
 - [x] Orchestrator Chat progress + memory/session UI contract → 模块级 `tool_progress`、短期会话历史列表、长期记忆心智澄清（2026-05-26；docs/specs/orchestrator-chat-progress-memory-ui-contract.md；plan: docs/plans/orchestrator-chat-progress-memory-ui-plan.md）
 - [x] NL Chat workspace snapshot + history restore split → 历史会话仅切右侧 transcript、显式恢复左侧 workspace、sessionStorage 同 tab 恢复、read-only 追问优先复用已有画像结果（2026-05-27；docs/plans/orchestrator-chat-workspace-snapshot-plan.md）
+- [x] Visible execution + repair loop → execution traces、deterministic known-intent executor、真实 bucket availability、repair 闭环、deterministic review、chat trace card（2026-05-28；docs/specs/orchestrator-visible-execution-design.md + docs/plans/orchestrator-visible-execution-plan.md）
+- [x] Visible execution V2 hardening → `RequestUnderstanding`、`workspace_evidence_answer`、general-chat lightweight plan、精准 repair 范围、trace 卡解释块（2026-05-28）
+- [x] Visible execution reliability hardening → hybrid routing、usable_for_profile availability、strict_data_mode、per-UID module planning、lazy repair imports、review_final（2026-05-29）
+- [x] Visible execution V3 stability pass → lazy `query_data` imports、no-write cohort、ACK 时序修复、字段归一化、prepared JSON 质量门槛、profile-output review、general strict guard（2026-05-29）
+- [x] Visible execution V4 data compatibility & review accuracy → credit raw CSV aliases、`query_data` user_uuid、single-module review pass、repair direct ACK 对齐、`app.main` Data Agent 路由隔离（2026-05-29）
+- [x] Visible execution V5 clarification & cohort repair gating → `need_clarification`、`awaiting_resolution`、`/resolve`、cohort repair 策略卡、前端 `pendingResolution`（2026-05-29）
+- [x] Visible execution V5 production hardening → raw-first credit repair、Data Agent API lazy import、behavior/credit pre-write validation、clarification form、repair gating 阈值优化（2026-05-29）
+- [x] Visible execution V6 consistency & data quality pass → `auto_profile=false` query-only、required-bucket-only review、credit strong/weak signal、output writer 行级校验、Data Agent tri-state gating（2026-05-29）
 
 ## 已完成（最近）
+- [x] Visible execution reliability hardening（2026-05-29）
+  - router 修复中文紧贴 UID、workspace rerun 补 UID、trace days 解析，并仅对模糊请求启用轻量 routing classifier
+  - `data/id_files/...` 批量路径恢复显式 `parse_uid_file -> run_profile`，保持文件批量画像链路可审计
+  - availability 改成“可画像”语义：`usable_for_profile + checked_sources`，修复 invalid JSON 遮蔽 CSV
+  - behavior / credit CSV 最小 schema 校验收紧，不再只靠 `uid` 通过
+  - visible execution 调 `run_profile` 强制 `strict_data_mode=True`，禁止 sample fallback 污染
+  - batch 模块执行改成 per-UID 规划，严格尊重用户请求模块和依赖链
+  - repair 改成懒加载 Data Agent 执行依赖，并在写回后做 availability 复检
+  - execution trace 统一 `review_final`，general chat 至少带 `general_answer` step
+- [x] Visible execution V3 stability pass（2026-05-29）
+  - `tools/query_data.py` 改成 no-write cohort 执行，不再通过 output writer 写入 `data/*/by_uid`
+  - `tools/__init__.py` 与 `query_data` 全链路 lazy import，普通 orchestrator 导入不再放大 `pymysql` 依赖
+  - ACK 生命周期统一调整为 `open_ack -> awaiting_user_ack -> wait/execute`
+  - availability 增加列名归一化、prepared JSON 最低质量门槛、`quality_score / weak_reasons / row_count`
+  - review 升级为读取 `profile_output` 实际结果，识别 `module_error / empty_summary / missing_structured_result / degraded_model_output`
+  - general LLM tool loop 中若调用 `run_profile`，强制注入 `strict_data_mode=True`
+- [x] Visible execution V4 data compatibility & review accuracy（2026-05-29）
+  - availability 的 credit CSV 改为兼容真实 MX raw 字段与 UID alias，不再把本地 raw credit 误判成缺失
+  - `query_data` UID alias 扩到 `user_uuid / customer_id` 等真实 SQL 列名
+  - review 改成围绕“请求模块及其依赖是否满足”判定；单模块请求成功即 `pass`
+  - direct `repair_profile_data()` 的 ACK 顺序改成先 `open_ack` 再触发 preview callback
+  - `app.main` 在缺 Data Agent 执行依赖时仍可启动，但不挂 `/api/data-acquisition/*`
+- [x] Visible execution V5 clarification & cohort repair gating（2026-05-29）
+  - router 新增 `need_clarification`，cohort 信息不足时走可恢复 clarification 卡
+  - 新增 `awaiting_resolution` SSE 事件与 `/api/orchestrator/sessions/{id}/resolve`
+  - clarification 补完 `country + time_window` 后在同一 execution 内继续执行
+  - cohort 返回 UID `> 20` 且缺失 bucket `>= 2` 类时，先弹 repair 策略卡
+  - 前端 reducer / ChatPanel 新增 `pendingResolution`，与 SQL ACK 分离
+- [x] Visible execution V5 production hardening（2026-05-29）
+  - credit repair 正式切到 raw-first，prompt / required columns 不再要求画像摘要字段
+  - `data_acquisition_agent/api.py` 改成 `/execute` 局部导入执行层依赖，轻量导入 `router`
+  - `output_writer` 前移 behavior / credit 最小 schema 校验，阻止 uid-only 脏数据落盘
+  - clarification 卡升级成可编辑表单，支持 `country / time_window / auto_profile`
+  - cohort repair strategy 阈值改成 `UID >= 10` 或 `missing buckets >= 2` 或 `estimated repairs >= 2`
+  - `query_data()` 单次调用改为优先返回真实 `rows_estimated`
+- [x] Visible execution V6 consistency & data quality pass（2026-05-29）
+  - clarification answers 中 `auto_profile=false` 改成 query-only 收束，不再自动继续画像
+  - review 的 weak bucket warning 只检查 required buckets，避免 App-only 被 credit fallback 误伤
+  - credit signal contract 拆成 strong raw / weak meta / summary，并统一到 availability + output writer
+  - `output_writer` 新增 `uid_column -> actual column` 解析与 behavior / credit 行级非空校验
+  - Data Agent capability 改成 tri-state，并统一作用于 router 挂载、query-data 与 repair
+- [x] Visible execution V2 hardening（2026-05-28）
+  - `execution_plan` 新增 `request_understanding`：显式展示 route label / rewritten goal / focus / answer mode / route reason
+  - 只读追问默认基于已有画像证据调一次受限 LLM；模型失败回退模板式 summary
+  - `general_chat` 也先发 lightweight execution trace，不再完全黑盒
+  - 无 reusable workspace 且无 UID 的只读追问直接 blocked，不再静默回退 general chat
+  - repair 仅对真实缺失该 bucket 的 UID 执行
+  - 前端 trace 卡新增“需求理解 / 路径说明 / 为什么这样做 / 观察结果”
+- [x] Visible execution + repair loop（2026-05-28）
+  - known-intent 请求走确定性执行器，general chat 保留原有 LLM loop 兜底
+  - `execution_traces` 持久化并接入会话恢复 / SSE / 前端 trace 卡
+  - `query_data_then_profile` 支持 cohort -> availability -> repair -> profile 两段式闭环
+  - repair 拒绝 / 非 `mx` Data Agent / 零基础 bucket 走显式 blocked 或降级回答
+  - review step 与 review_result 对齐，不再残留 `pending`
 - [x] NL Chat 状态分层修复（2026-05-27）
   - workspace state / chat session / reusable workspace snapshot 三层显式分离
   - 历史会话点击不再整页跳转，不再清空左侧画像
@@ -92,6 +154,7 @@
 - [x] V2 Step 5：TDD 实现 — 已完成（2026-04-30，71 tests，全量 163 passed）
 - [x] V2 Step 7：交付 → ✅ 完成（2026-04-30）
 - [ ] V2 Step 8：白盒审计 + 面试技术总结
+- [x] V7 Capability Gating Follow-up：测试 capability 显式控制、direct profile planning gating、`data_acquisition_unavailable` step、credit `source_shape` 收紧、`rows_per_uid` numeric UID 修复（2026-05-29）
 
 ## 已完成
 - Phase 0 / Task 0.0 — 添加 pyyaml 依赖（1bfac61）
@@ -137,6 +200,7 @@
 - [x] behavior_profile / credit_profile 的 `structured_result` 顶层未回传 `model_trace`，与 app_profile / comprehensive_profile 不一致 —— 影响 used_llm 可观测性（2026-04-28 P0-2 验证发现）
 - [x] behavior_timeline_summary 在端到端运行中触发 1 次 json_parse retry（"Unterminated string"），retry 后仍 fallback 到 model_unavailable —— 需关注稳定性（2026-04-28 P0-2 验证发现）
 - [x] data_acquisition_agent V2 — 连接 StarRocks 执行审核后 SQL + 数据落到 data/ per-uid 文件 — Step 5 TDD 完成（2026-04-30，71 tests）
+- [x] v7 follow-up 已收敛 direct profile gating：Data Agent disabled/unavailable 时，仅对本次请求相关缺失 bucket 发出 `data_acquisition_unavailable`；可运行基础模块继续 partial profile，不再先生成 `repair_*` 再执行期失败（2026-05-29）
 
 ## 阻塞项
 （空）

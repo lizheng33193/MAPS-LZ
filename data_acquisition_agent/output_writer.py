@@ -14,6 +14,16 @@ from typing import Optional
 
 import pandas as pd
 
+from app.core.data_contracts import (
+    BEHAVIOR_EVENT_FIELDS_NORMALIZED,
+    BEHAVIOR_TIME_FIELDS_NORMALIZED,
+    CREDIT_PROFILE_SIGNAL_FIELDS_NORMALIZED,
+    UID_ALIASES_NORMALIZED,
+    normalized_column_map,
+    normalize_column_name,
+    row_has_any,
+)
+
 from .schemas import ErrorType
 
 
@@ -36,6 +46,41 @@ APP_BUCKET_REQUIRED_COLUMNS: tuple[str, ...] = (
     "gp_category",
     "ai_category_level_2_CN",
 )
+_CREDIT_SUMMARY_SIGNAL_FIELDS = {
+    "credit_score",
+    "credit_score_band",
+    "risk_level",
+    "repayment_status",
+    "loan_amount",
+    "payment_amount",
+    "overdue_days",
+    "debt_amount",
+    "balance",
+}
+
+_CREDIT_SUMMARY_SIGNAL_FIELDS_NORMALIZED = {normalize_column_name(field) for field in _CREDIT_SUMMARY_SIGNAL_FIELDS if field}
+
+
+def resolve_actual_column(df: pd.DataFrame, requested_column: str) -> str:
+    actual = normalized_column_map(df.columns).get(normalize_column_name(requested_column))
+    if not actual:
+        raise OutputWriterError(
+            ErrorType.RESULT_VALIDATION_FAILED,
+            "result validation failed",
+            request_id="",
+        )
+    return str(actual)
+
+
+def _normalized_rows(df: pd.DataFrame) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for row in df.to_dict(orient="records"):
+        rows.append({
+            normalize_column_name(key): value
+            for key, value in row.items()
+            if key
+        })
+    return rows
 
 
 def validate_bucket_schema(
@@ -45,11 +90,10 @@ def validate_bucket_schema(
     output_format: str,
     uid_column: str,
     request_id: str,
-) -> None:
+) -> str:
     """§8.1 schema 校验：app bucket 强制 csv + 7 字段；uid_column 缺失 → result_validation_failed。"""
-    if uid_column not in df.columns:
-        raise OutputWriterError(ErrorType.RESULT_VALIDATION_FAILED,
-            "result validation failed", request_id=request_id)
+    actual_uid_column = resolve_actual_column(df, uid_column)
+    normalized_columns = {normalize_column_name(col) for col in df.columns}
     if output_bucket == "app":
         if output_format != "csv":
             raise OutputWriterError(ErrorType.RESULT_VALIDATION_FAILED,
@@ -58,6 +102,46 @@ def validate_bucket_schema(
         if missing:
             raise OutputWriterError(ErrorType.RESULT_VALIDATION_FAILED,
                 "result validation failed", request_id=request_id)
+        return actual_uid_column
+    if output_bucket == "behavior":
+        if not (UID_ALIASES_NORMALIZED & normalized_columns):
+            raise OutputWriterError(ErrorType.RESULT_VALIDATION_FAILED,
+                "result validation failed", request_id=request_id)
+        if not (BEHAVIOR_TIME_FIELDS_NORMALIZED & normalized_columns):
+            raise OutputWriterError(ErrorType.RESULT_VALIDATION_FAILED,
+                "result validation failed", request_id=request_id)
+        if not (BEHAVIOR_EVENT_FIELDS_NORMALIZED & normalized_columns):
+            raise OutputWriterError(ErrorType.RESULT_VALIDATION_FAILED,
+                "result validation failed", request_id=request_id)
+        normalized_uid_column = normalize_column_name(actual_uid_column)
+        if not any(
+            row_has_any(row, {normalized_uid_column})
+            and row_has_any(row, BEHAVIOR_TIME_FIELDS_NORMALIZED)
+            and row_has_any(row, BEHAVIOR_EVENT_FIELDS_NORMALIZED)
+            for row in _normalized_rows(df)
+        ):
+            raise OutputWriterError(ErrorType.RESULT_VALIDATION_FAILED,
+                "result validation failed", request_id=request_id)
+        return actual_uid_column
+    if output_bucket == "credit":
+        if not (UID_ALIASES_NORMALIZED & normalized_columns):
+            raise OutputWriterError(ErrorType.RESULT_VALIDATION_FAILED,
+                "result validation failed", request_id=request_id)
+        if not (
+            CREDIT_PROFILE_SIGNAL_FIELDS_NORMALIZED & normalized_columns
+        ):
+            raise OutputWriterError(ErrorType.RESULT_VALIDATION_FAILED,
+                "result validation failed", request_id=request_id)
+        normalized_uid_column = normalize_column_name(actual_uid_column)
+        if not any(
+            row_has_any(row, {normalized_uid_column})
+            and row_has_any(row, CREDIT_PROFILE_SIGNAL_FIELDS_NORMALIZED)
+            for row in _normalized_rows(df)
+        ):
+            raise OutputWriterError(ErrorType.RESULT_VALIDATION_FAILED,
+                "result validation failed", request_id=request_id)
+        return actual_uid_column
+    return actual_uid_column
 
 
 def build_per_uid_payloads(
@@ -78,7 +162,8 @@ def build_per_uid_payloads(
     """
     import io, json
     items: list[tuple[str, bytes]] = []
-    for uid, group in df.groupby(uid_column, sort=True):
+    actual_uid_column = resolve_actual_column(df, uid_column)
+    for uid, group in df.groupby(actual_uid_column, sort=True):
         uid_str = str(uid)
         if output_format == "csv":
             buf = io.StringIO()

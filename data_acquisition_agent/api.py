@@ -8,10 +8,7 @@ from fastapi.responses import JSONResponse
 from .schemas import (GenerateRequest, GenerateResponse, ErrorType, ErrorResponse,
                       ExecuteRequest, ExecuteResponse)
 from .orchestrator import DataAcquisitionOrchestrator, OrchestratorError
-from .executor import run_execute_pipeline as _run_execute_pipeline
-from .executor import ExecutorError
 from .output_writer import OutputWriterError
-from .connection import DbUnreachableError
 
 
 router = APIRouter(prefix="/api/data-acquisition", tags=["data-acquisition"])
@@ -31,6 +28,19 @@ _STATUS_MAP = {
 }
 
 _ORCH = None
+
+
+def _run_execute_pipeline(request: ExecuteRequest, *, request_id: str):
+    from .executor import run_execute_pipeline
+
+    return run_execute_pipeline(request, request_id=request_id)
+
+
+def _load_execute_errors():
+    from .connection import DbUnreachableError
+    from .executor import ExecutorError
+
+    return ExecutorError, DbUnreachableError
 
 
 def _get_orchestrator():
@@ -65,16 +75,24 @@ def execute(request: ExecuteRequest):
     try:
         payload = _run_execute_pipeline(request, request_id=rid)
         return ExecuteResponse(**payload)
-    except DbUnreachableError:
-        err = ErrorResponse(error_type=ErrorType.DB_UNREACHABLE,
-            message="database connection failed", request_id=rid)
-        return JSONResponse(status_code=502,
-            content=err.model_dump(mode="json"))
-    except (ExecutorError, OutputWriterError) as e:
-        err = ErrorResponse(error_type=e.error_type, message=e.message,
-            request_id=e.request_id or rid)
-        return JSONResponse(status_code=_STATUS_MAP[e.error_type],
-            content=err.model_dump(mode="json"))
+    except Exception as exc:
+        error_type = getattr(exc, "error_type", None)
+        if isinstance(error_type, str):
+            try:
+                error_type = ErrorType(error_type)
+            except ValueError:
+                error_type = None
+        if error_type == ErrorType.DB_UNREACHABLE or exc.__class__.__name__ == "DbUnreachableError":
+            err = ErrorResponse(error_type=ErrorType.DB_UNREACHABLE,
+                message="database connection failed", request_id=rid)
+            return JSONResponse(status_code=502,
+                content=err.model_dump(mode="json"))
+        if isinstance(exc, OutputWriterError) or error_type in _STATUS_MAP:
+            err = ErrorResponse(error_type=error_type, message=getattr(exc, "message", str(exc)),
+                request_id=getattr(exc, "request_id", None) or rid)
+            return JSONResponse(status_code=_STATUS_MAP[error_type],
+                content=err.model_dump(mode="json"))
+        raise
 
 
 @router.get("/healthz")
