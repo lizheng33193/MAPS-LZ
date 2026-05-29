@@ -11,6 +11,7 @@ EXPECTED_COMPONENTS = [
     "ChatMessageList",
     "ChatInputBox",
     "ChatToolCallStream",
+    "ChatExecutionTraceCard",
     "ChatAckCard",
     "ChatBudgetBanner",
     "ChatProviderFallbackBanner",

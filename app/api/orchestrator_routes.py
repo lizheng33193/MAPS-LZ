@@ -21,6 +21,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.services.orchestrator_agent.ack_bus import resolve_ack
+from app.services.orchestrator_agent.resolve_bus import resolve_pending_resolution
 from app.services.orchestrator_agent.agent_loop import run_agent_loop
 from app.services.orchestrator_agent.memory_policy import build_memory_record
 from app.services.orchestrator_agent.memory_store import (
@@ -184,6 +185,31 @@ async def ack_endpoint(session_id: str, body: _AckBody) -> dict:
     else:
         raise HTTPException(422, "ack body must contain either 'confirm' or 'decision'")
     ok = resolve_ack(session_id, confirm)
+    return {"resolved": ok}
+
+
+class _ResolveBody(BaseModel):
+    execution_id: str = Field(..., min_length=1)
+    step_id: str = Field(..., min_length=1)
+    resolution_type: str = Field(..., min_length=1)
+    answers: Optional[dict[str, Any]] = None
+    selected_option: Optional[str] = None
+
+
+@router.post("/sessions/{session_id}/resolve")
+async def resolve_endpoint(session_id: str, body: _ResolveBody) -> dict:
+    if body.answers is None and not body.selected_option:
+        raise HTTPException(422, "resolve body must contain either 'answers' or 'selected_option'")
+    ok = resolve_pending_resolution(
+        session_id,
+        {
+            "execution_id": body.execution_id,
+            "step_id": body.step_id,
+            "resolution_type": body.resolution_type,
+            "answers": body.answers or {},
+            "selected_option": body.selected_option,
+        },
+    )
     return {"resolved": ok}
 
 

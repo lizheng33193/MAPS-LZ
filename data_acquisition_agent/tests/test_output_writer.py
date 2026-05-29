@@ -1,6 +1,6 @@
 import pandas as pd, pytest
 from data_acquisition_agent.output_writer import (validate_bucket_schema,
-    OutputWriterError, APP_BUCKET_REQUIRED_COLUMNS)
+    OutputWriterError, APP_BUCKET_REQUIRED_COLUMNS, resolve_actual_column)
 from data_acquisition_agent.schemas import ErrorType
 
 def _app_df():
@@ -31,9 +31,67 @@ def test_uid_column_must_exist():
     assert ei.value.error_type == ErrorType.RESULT_VALIDATION_FAILED
 
 def test_behavior_bucket_minimal_passes():
-    df = pd.DataFrame([{"uid": "u1", "extra": 1}])
+    df = pd.DataFrame([{"uid": "u1", "eventTime": "2026-05-29T00:00:00Z", "eventName": "login"}])
     validate_bucket_schema(df, output_bucket="behavior",
         output_format="json", uid_column="uid", request_id="rid")
+
+def test_behavior_bucket_rejects_uid_only_payload():
+    df = pd.DataFrame([{"uid": "u1"}])
+    with pytest.raises(OutputWriterError) as ei:
+        validate_bucket_schema(df, output_bucket="behavior",
+            output_format="json", uid_column="uid", request_id="rid")
+    assert ei.value.error_type == ErrorType.RESULT_VALIDATION_FAILED
+
+def test_behavior_bucket_rejects_blank_key_fields():
+    df = pd.DataFrame([{"uid": "u1", "eventTime": "", "eventName": " "}])
+    with pytest.raises(OutputWriterError) as ei:
+        validate_bucket_schema(df, output_bucket="behavior",
+            output_format="json", uid_column="uid", request_id="rid")
+    assert ei.value.error_type == ErrorType.RESULT_VALIDATION_FAILED
+
+def test_credit_bucket_accepts_raw_alias_payload():
+    df = pd.DataFrame([{
+        "user_uuid": "u1",
+        "valor": "720",
+        "nombrescore": "FICO",
+        "consultas_detail_json": "[]",
+        "creditos_detail_json": "[]",
+    }])
+    validate_bucket_schema(df, output_bucket="credit",
+        output_format="csv", uid_column="user_uuid", request_id="rid")
+
+def test_credit_bucket_accepts_legacy_summary_payload():
+    df = pd.DataFrame([{
+        "uid": "u1",
+        "credit_score_band": "B",
+        "repayment_status": "stable",
+        "risk_level": "low",
+    }])
+    validate_bucket_schema(df, output_bucket="credit",
+        output_format="csv", uid_column="uid", request_id="rid")
+
+def test_credit_bucket_rejects_uid_only_payload():
+    df = pd.DataFrame([{"uid": "u1"}])
+    with pytest.raises(OutputWriterError) as ei:
+        validate_bucket_schema(df, output_bucket="credit",
+            output_format="csv", uid_column="uid", request_id="rid")
+    assert ei.value.error_type == ErrorType.RESULT_VALIDATION_FAILED
+
+def test_credit_bucket_rejects_weak_meta_only_payload():
+    df = pd.DataFrame([{
+        "user_uuid": "u1",
+        "timestamp_": "1772369656095",
+        "code": "0",
+        "apply_risk_id": "AR-1",
+    }])
+    with pytest.raises(OutputWriterError) as ei:
+        validate_bucket_schema(df, output_bucket="credit",
+            output_format="csv", uid_column="user_uuid", request_id="rid")
+    assert ei.value.error_type == ErrorType.RESULT_VALIDATION_FAILED
+
+def test_resolve_actual_column_accepts_normalized_alias():
+    df = pd.DataFrame([{"userUuid": "u1", "valor": "720"}])
+    assert resolve_actual_column(df, "user_uuid") == "userUuid"
 
 
 import json
@@ -82,6 +140,14 @@ def test_behavior_csv_payload_no_wrapper():
     uid, payload = items[0]
     assert b"schema_version" not in payload
     assert b"x" in payload
+
+def test_build_per_uid_payloads_accepts_resolved_uid_alias():
+    df = pd.DataFrame([{"userUuid": "u1", "x": 1}, {"userUuid": "u2", "x": 2}])
+    actual_uid_column = resolve_actual_column(df, "user_uuid")
+    items = build_per_uid_payloads(df, output_bucket="behavior",
+        output_format="csv", uid_column=actual_uid_column, approved_by="t",
+        source_request_id=None, executed_at="t", request_id="rid")
+    assert [uid for uid, _ in items] == ["u1", "u2"]
 
 
 from pathlib import Path

@@ -1,4 +1,9 @@
-"""Per-session ACK rendezvous via threading.Event."""
+"""In-memory ACK rendezvous via threading.Event.
+
+Current keying stays session-scoped for single-process demo/runtime use.
+Future pluggable backends should target a composite identity:
+`session_id + execution_id + step_id`.
+"""
 
 from __future__ import annotations
 

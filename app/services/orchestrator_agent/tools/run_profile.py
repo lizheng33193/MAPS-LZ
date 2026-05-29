@@ -20,7 +20,7 @@ def run_profile(
     input_data: RunProfileInput,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> RunProfileOutput:
-    orch = AnalysisOrchestrator()
+    orch = AnalysisOrchestrator(strict_data_mode=input_data.strict_data_mode)
     modules = input_data.modules or ["app"]
     results: list[dict[str, Any]] = []
     total = len(input_data.uids) * len(modules)

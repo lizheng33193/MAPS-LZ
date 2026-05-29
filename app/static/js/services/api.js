@@ -184,6 +184,17 @@ async function ackOrchestratorTool(sessionId, toolCallId, decision) {
   return res.json();
 }
 
+async function resolveOrchestratorStep(sessionId, payload) {
+  const res = await fetch(`/api/orchestrator/sessions/${encodeURIComponent(sessionId)}/resolve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload || {})
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail || `resolveOrchestratorStep ${res.status}`);
+  return body;
+}
+
 async function fetchOrchestratorSession(sessionId) {
   const res = await fetch(`/api/orchestrator/sessions/${encodeURIComponent(sessionId)}`);
   if (!res.ok) throw new Error(`fetchOrchestratorSession ${res.status}`);
@@ -284,6 +295,6 @@ window.AppServices = window.AppServices || {};
 window.AppServices.api = {
   analyzeByUid, analyzeByFile, analyzeByUidStream, fetchTrace, fetchUiConfig, analyzeModule,
   createOrchestratorSession, sendOrchestratorMessage, openOrchestratorStream,
-  ackOrchestratorTool, fetchOrchestratorSession, fetchOrchestratorSessions, fetchMemoryStatus, queryMemory,
+  ackOrchestratorTool, resolveOrchestratorStep, fetchOrchestratorSession, fetchOrchestratorSessions, fetchMemoryStatus, queryMemory,
   listMemories, createMemory, updateMemory, archiveMemory, restoreMemory, deleteMemory
 };

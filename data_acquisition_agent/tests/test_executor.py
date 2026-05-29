@@ -164,14 +164,13 @@ def _mock_conn_pipeline(rows_count: int):
     return conn
 
 def test_pipeline_happy_path(monkeypatch, tmp_path):
-    from data_acquisition_agent import executor as ex
     from data_acquisition_agent import output_writer as ow
     bucket = tmp_path / "app"; bucket.mkdir()
     monkeypatch.setattr(ow, "resolve_bucket_dir", lambda b: bucket)
     class CM:
         def __enter__(self_): return _mock_conn_pipeline(2)
         def __exit__(self_, *a): return False
-    monkeypatch.setattr(ex, "open_starrocks_connection", lambda **kw: CM())
+    monkeypatch.setitem(run_execute_pipeline.__globals__, "open_starrocks_connection", lambda **kw: CM())
 
     result = run_execute_pipeline(_exec_req(), request_id="rid-happy")
     assert result["output_bucket"] == "app"
@@ -179,6 +178,41 @@ def test_pipeline_happy_path(monkeypatch, tmp_path):
     assert sorted(result["filenames"]) == ["u1.csv", "u2.csv"]
     assert result["total_uids"] == 2
     assert result["metadata"]["row_count_total"] == 2
+
+
+def test_pipeline_rows_per_uid_counts_numeric_uid_values(monkeypatch, tmp_path):
+    from data_acquisition_agent import output_writer as ow
+
+    bucket = tmp_path / "app"
+    bucket.mkdir()
+    monkeypatch.setattr(ow, "resolve_bucket_dir", lambda b: bucket)
+
+    conn = MagicMock()
+    cur = MagicMock()
+    cur.fetchone.return_value = (3,)
+    cur.description = [(c,) for c in
+        ["uid","app_name","app_package","first_install_time",
+         "last_update_time","gp_category","ai_category_level_2_CN"]]
+    cur.fetchall.return_value = [
+        (123, "WA", "p", "t", "t", "g", "c"),
+        (123, "FB", "p", "t", "t", "g", "c"),
+        (456, "TG", "p", "t", "t", "g", "c"),
+    ]
+    conn.cursor.return_value.__enter__.return_value = cur
+
+    class CM:
+        def __enter__(self_):
+            return conn
+
+        def __exit__(self_, *a):
+            return False
+
+    monkeypatch.setitem(run_execute_pipeline.__globals__, "open_starrocks_connection", lambda **kw: CM())
+
+    result = run_execute_pipeline(_exec_req(), request_id="rid-numeric")
+
+    assert result["rows_per_uid"] == {"123": 2, "456": 1}
+
 
 def test_pipeline_build_table_script_rejected_no_connect(monkeypatch):
     from data_acquisition_agent import executor as ex

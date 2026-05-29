@@ -29,8 +29,9 @@ class LocalUserRepository(BaseUserRepository):
     reuse the in-memory dictionaries instead of re-reading the files.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, allow_sample_fallback: bool = True) -> None:
         """Load all sample data into memory when the repository is created."""
+        self.allow_sample_fallback = allow_sample_fallback
         self.data_dir = settings.resolve_path(settings.data_dir)
         self.app_source_dir = settings.resolve_path(settings.app_source_dir)
         self.app_by_uid_dir = settings.resolve_path(settings.app_by_uid_dir)
@@ -128,6 +129,9 @@ class LocalUserRepository(BaseUserRepository):
             if raw_csv_payload:
                 return raw_csv_payload
 
+        if not self.allow_sample_fallback:
+            return {}
+
         sample_record = self._get_record_or_empty(self._behavior_data_by_uid, normalized_uid)
         if sample_record:
             return {
@@ -159,6 +163,9 @@ class LocalUserRepository(BaseUserRepository):
             legacy_summary = self._read_credit_legacy_summary_json(json_path, normalized_uid)
             if legacy_summary:
                 return legacy_summary
+
+        if not self.allow_sample_fallback:
+            return {}
 
         sample_record = self._get_record_or_empty(self._credit_data_by_uid, normalized_uid)
         if sample_record:

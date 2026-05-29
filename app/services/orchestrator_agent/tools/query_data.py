@@ -1,10 +1,8 @@
-"""query_data — Parent-Child 隔离 + ACK；不动 data_acquisition_agent 任何文件。
+"""query_data — Parent-Child facade with lazy Data Agent execution imports.
 
-ACK 时序由 agent_loop.py 接管（避免同步 wait_ack 阻塞 SSE event loop）。
-本文件提供 _ChildAgent facade（agent_loop 直接调）+ query_data() 单测/兼容函数。
-
-V1 国别支持：mx → mexico；th → thailand（da-agent 抛 ManifestNotImplemented）；
-co/pe/cl/br 直接拒绝；其它 country code 在 QueryDataInput 已被 Pydantic 拒绝。
+`query_data` is used for cohort discovery, not profile-bucket repair. The
+execute phase therefore returns UID lists and SQL metadata only, and does not
+write anything into `data/*/by_uid`.
 """
 
 from __future__ import annotations
@@ -12,57 +10,106 @@ from __future__ import annotations
 import re
 import uuid
 from dataclasses import dataclass
+from typing import Any
 
-# 仅 import，不修改 data_acquisition_agent 任何文件
-from data_acquisition_agent.orchestrator import DataAcquisitionOrchestrator
-from data_acquisition_agent.executor import run_execute_pipeline
-from data_acquisition_agent.schemas import (
-    GenerateRequest, ExecuteRequest, TargetCountry, TargetAction,
+from app.core.data_acquisition_capability import (
+    data_acquisition_unavailable_message,
+    get_data_acquisition_capability,
 )
-
 from app.services.orchestrator_agent.schemas import QueryDataInput, QueryDataOutput
 
 
 _PROHIBITED_SQL = re.compile(
     r"\b(DELETE|DROP|TRUNCATE|UPDATE|INSERT)\b", re.IGNORECASE,
 )
-
-# Plan #03 短码 → da-agent TargetCountry 映射
-_COUNTRY_MAP: dict[str, TargetCountry] = {
-    "mx": TargetCountry.MEXICO,
-    "th": TargetCountry.THAILAND,
-    # co/pe/cl/br 不在 da-agent，工具入口直接拒绝
+_COUNTRY_MAP: dict[str, str] = {
+    "mx": "mexico",
+    "th": "thailand",
 }
+_UID_FIELD_CANDIDATES = {
+    "uid",
+    "userid",
+    "useruuid",
+    "customerid",
+}
+
+
+def _normalize_column_name(name: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(name or "").strip().lower())
+
+
+def _load_settings():
+    from app.core.config import settings
+
+    return settings
+
+
+def _load_manifest(country: str):
+    from data_acquisition_agent.manifest import load_manifest
+
+    return load_manifest(country)
+
+
+def enforce_pre_execution_gates(**kwargs):
+    from data_acquisition_agent.executor import enforce_pre_execution_gates as _impl
+
+    return _impl(**kwargs)
+
+
+def open_starrocks_connection(*args, **kwargs):
+    from data_acquisition_agent.connection import open_starrocks_connection as _impl
+
+    return _impl(*args, **kwargs)
+
+
+def precheck_row_count(**kwargs):
+    from data_acquisition_agent.executor import precheck_row_count as _impl
+
+    return _impl(**kwargs)
+
+
+def execute_query(**kwargs):
+    from data_acquisition_agent.executor import execute_query as _impl
+
+    return _impl(**kwargs)
 
 
 @dataclass
 class _ChildResult:
     sql_text: str
-    rows_estimated: int  # V1 由 da-agent execute 阶段返回；generate 阶段固定 -1
+    rows_estimated: int
 
 
 class _ChildAgent:
-    """Per-call facade；不保留状态，不修改 data_acquisition_agent。"""
+    """Per-call facade with lazy Data Agent imports."""
 
     def __init__(self, country: str) -> None:
+        capability = get_data_acquisition_capability()
+        if not capability.enabled:
+            raise RuntimeError(data_acquisition_unavailable_message(capability))
         if country not in _COUNTRY_MAP:
             raise ValueError(
                 f"V1 query_data does not support country={country!r}; "
                 f"only mx (and stub th) supported. See Plan #03 Scope."
             )
-        self._country = _COUNTRY_MAP[country]
+        from data_acquisition_agent.orchestrator import DataAcquisitionOrchestrator
+        from data_acquisition_agent.schemas import TargetCountry
+
+        self._country_code = country
+        self._country_name = _COUNTRY_MAP[country]
+        self._target_country = TargetCountry(self._country_name)
         self._orch = DataAcquisitionOrchestrator()
 
     def run_query(self, request_text: str) -> _ChildResult:
-        """Generate SQL via da-agent. Returns sql_text；rows_estimated=-1（待 execute 阶段）。"""
+        from data_acquisition_agent.schemas import GenerateRequest, TargetAction
+
         gen_req = GenerateRequest(
             natural_language_request=request_text,
-            target_country=self._country,
+            target_country=self._target_country,
             target_action=TargetAction.EXTRACT,
         )
         gen_resp = self._orch.generate(gen_req)
-        sql_text = gen_resp.sql or ""
-        return _ChildResult(sql_text=sql_text, rows_estimated=-1)
+        return _ChildResult(sql_text=gen_resp.sql or "", rows_estimated=-1)
 
     def execute(
         self,
@@ -71,40 +118,58 @@ class _ChildAgent:
         approved_by: str = "orchestrator_agent",
         output_bucket: str = "behavior",
         output_format: str = "json",
-    ) -> dict:
-        """Execute approved SQL. Returns {uids, rows_actual}.
+    ) -> dict[str, Any]:
+        del approved_by, output_bucket, output_format
+        request_id = uuid.uuid4().hex
+        manifest = _load_manifest(self._country_name)
+        settings = _load_settings()
 
-        - output_bucket V1 默认 "behavior"（与 query_data 用法对齐：拉一批 UID 用于跑画像）
-        - output_format V1 默认 "json"（避免 app bucket→csv 强制约束）
-        - UID 列表从 rows_per_uid.keys() 反推（ExecuteResponse 无 uids 字段）
-        """
-        rid = uuid.uuid4().hex
-        exe_req = ExecuteRequest(
+        enforce_pre_execution_gates(
             approved_sql=sql_text,
             sql_kind="query_only",
-            target_country=self._country,
-            approved_by=approved_by,
-            output_bucket=output_bucket,
-            output_format=output_format,
+            analyst_private_prefix=manifest.analyst_private_prefix,
+            request_id=request_id,
         )
-        exe_resp = run_execute_pipeline(exe_req, request_id=rid)
-        rows_per_uid = exe_resp.get("rows_per_uid", {}) or {}
-        uids = list(rows_per_uid.keys())
-        rows_actual = int(exe_resp.get("metadata", {}).get("row_count_total", 0))
-        return {"uids": uids, "rows_actual": rows_actual}
+        with open_starrocks_connection(request_id=request_id) as conn:
+            rows_estimated = precheck_row_count(
+                conn=conn,
+                approved_sql=sql_text,
+                max_rows=settings.da_max_result_rows,
+                timeout_s=settings.da_query_timeout_seconds,
+                request_id=request_id,
+            )
+            df = execute_query(
+                conn=conn,
+                approved_sql=sql_text,
+                timeout_s=settings.da_query_timeout_seconds,
+                request_id=request_id,
+            )
 
+        uid_column = next(
+            (
+                col
+                for col in df.columns
+                if _normalize_column_name(col) in _UID_FIELD_CANDIDATES
+            ),
+            None,
+        )
+        if uid_column is None:
+            raise ValueError("query_data result missing uid column")
 
-# ANTI-PATTERN: Do not expose require_confirmation as a tool argument.
-# If the LLM can pass require_confirmation=False, prompt injection can
-# bypass the security ACK gate. ACK is hardcoded inside agent_loop.
+        uids = sorted({
+            str(value).strip()
+            for value in df[uid_column].tolist()
+            if str(value).strip()
+        })
+        return {
+            "uids": uids,
+            "rows_actual": int(len(df)),
+            "rows_estimated": int(rows_estimated),
+        }
+
 
 def query_data(input_data: QueryDataInput) -> QueryDataOutput:
-    """Single-shot query path — 仅供单测 / 外部调用者 facade。
-
-    生产路径（agent_loop.py）**不**走本函数——agent_loop 直接导入 `_ChildAgent`,
-    拆成6 个阶段调用：run_query → SSE preview → ACK gate → wait_ack → execute → SSE final.
-    ACK 控制仅在 agent_loop 内部硬编码，本函数不涉及 ACK（所以单测能同步跑完）。
-    """
+    """Single-shot query path for tests and non-streaming callers."""
     child = _ChildAgent(country=input_data.country)
     try:
         gen = child.run_query(input_data.request)
@@ -116,7 +181,7 @@ def query_data(input_data: QueryDataInput) -> QueryDataOutput:
             uids=execute_out["uids"],
             rows_actual=execute_out["rows_actual"],
             sql_text=sql_text,
-            rows_estimated=gen.rows_estimated,
+            rows_estimated=int(execute_out.get("rows_estimated", gen.rows_estimated) or -1),
         )
     finally:
-        del child  # per-call 即丢
+        del child

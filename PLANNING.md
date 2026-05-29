@@ -13,6 +13,75 @@
 - `POST /api/orchestrator/sessions` 与 `POST /api/orchestrator/sessions/{id}/messages` 支持可选 `workspace_snapshot`，后端存入 `active_entities.workspace_snapshot`。
 - `agent_loop` 在进入常规 LLM 决策前，会对 read-only 追问执行确定性复用守卫：优先读同 session 成功 `tool_calls`，再读 `workspace_snapshot`；只有缺模块或用户显式要求重跑时才回退到 `run_profile`。
 
+## 2026-05-28 状态补丁
+
+- Orchestrator Chat 新增 visible execution fast path：`Intent Router -> Data Availability Check -> Visible Plan -> Tool Execution -> Deterministic Review -> Final Answer`。
+- `OrchestratorSession` 持久化 `execution_traces`，短期会话恢复会同时恢复 transcript、tool stream 与 execution trace。
+- 已知意图（只读画像追问 / 单 UID / 多 UID / cohort / trace）优先走确定性执行器；未知/general chat 继续回落到原有 LLM loop。
+- 新增真实 bucket availability 检查：直接检查 `data/app|behavior|credit/by_uid`，不再把 sample fallback 当作可执行画像依据。
+- 新增 `repair_profile_data` 补数能力；`mx` 支持 Data Agent 补数 + ACK + CSV 落地，其它国家在 Data Agent 闭环处显式 blocked。
+- SSE 新增 `execution_plan`、`plan_step_status`、`review_result`；前端右侧 Chat 新增 execution trace 卡，但仍保留原有低层工具流。
+- V2 hardening：新增 `RequestUnderstanding` 契约，`execution_plan` 现在会显式携带 `route_label / rewritten_goal / focus / answer_mode / route_reason`。
+- 只读画像追问默认改为 `workspace_evidence_answer`：基于已有 `summary + structured_result` 调一次受限 LLM；模型失败再回退模板式 summary。
+- `general_chat` 也会先发送 lightweight `execution_plan`，不再完全黑盒等待。
+- `answer_from_workspace` 在没有可复用上下文时不再静默兜底：有 UID 提升为画像执行；无 UID 直接 visible blocked。
+- repair 以 bucket 为粒度，仅对真实缺失该 bucket 的 UID 发起补数，不再整批 UID 一刀切。
+
+## 2026-05-29 状态补丁
+
+- Visible execution 进入 reliability hardening：保留现有架构，不引入 LangGraph / reflection。
+- 路由升级为 hybrid：先做确定性提取，再只对模糊请求启用轻量 routing classifier；修复中文紧贴 UID、workspace rerun 自动补 UID、trace days 解析。
+- `data/id_files/...` 批量入口继续保留：命中 UID 文件时先显式执行 `parse_uid_file`，再进入 per-UID 画像规划。
+- availability 增加 `usable_for_profile` 与 `checked_sources`，并修复 invalid JSON 遮蔽有效 CSV 的 precedence 问题。
+- behavior / credit CSV 不再只靠 `uid` 判可用，必须满足最小画像字段和有效记录要求。
+- 模块执行严格尊重用户请求；batch 改成 per-UID 规划；visible execution 调 `run_profile` 一律 `strict_data_mode=True`。
+- `LocalUserRepository` 新增 sample fallback 开关；strict mode 下禁止 sample 污染 Chat 可见执行结果。
+- `repair_profile_data` 改为懒加载 Data Agent 执行依赖，并在 CSV 写回后重新跑 availability 复检。
+- execution trace 统一使用 `review_final`，general chat 计划至少包含 `general_answer` step。
+
+## 2026-05-29 V3 Stability Pass
+
+- `query_data` 改成 lazy import + no-write cohort 执行：cohort 查询只返回 UID 列表和 SQL 元信息，不再污染 `data/*/by_uid` bucket。
+- ACK 生命周期统一收口到 `agent_loop`：`open_ack -> awaiting_user_ack -> wait/execute`，修复快速确认时的竞态风险。
+- availability 增加列名归一化与 prepared JSON 最低质量门槛，并补充 `quality_score / weak_reasons / row_count`。
+- deterministic review 现在会读取 `profile_output` 实际模块结果，识别模块错误、空 summary、空 structured_result 和模型降级痕迹。
+- `general_chat` 下若 LLM 仍决定调 `run_profile`，orchestrator 会强制注入 `strict_data_mode=True`，不再允许绕过 strict mode。
+
+## 2026-05-29 V4 Data Compatibility & Review Accuracy Pass
+
+- availability 的 credit CSV 兼容真实 MX raw 字段：新增 `user_uuid` 等 UID alias 与 `valor / nombrescore / consultas_detail_json / creditos_detail_json` 等信用信号别名。
+- `query_data` 的 UID 列提取支持 `user_uuid` / `customer_id` 等 alias，避免 cohort SQL 返回真实字段名时误报缺少 UID。
+- review 改成“满足用户请求”优先：显式单模块请求成功即 `pass`，不再因为未请求 bucket 缺失而自动 warning。
+- direct `repair_profile_data()` 保留兼容层，但 ACK 顺序已对齐为先注册再触发 preview callback。
+- `app.main` 启动时按依赖可用性决定是否挂载 `/api/data-acquisition/*`，主应用不再被 Data Agent 执行依赖拖垮。
+
+## 2026-05-29 V5 Clarification & Cohort Repair Gating
+
+- cohort 路径新增 `need_clarification`：当请求明显是在筛一批用户，但缺国家或时间范围时，右侧 Chat 会先进入可恢复 clarification 卡，而不是掉回 general chat。
+- 新增通用 resolution 交互：SSE 发送 `awaiting_resolution`，前端通过 `/api/orchestrator/sessions/{id}/resolve` 回传 clarification answers 或 repair strategy selection。
+- clarification 默认收集 `country + time_window`，补充后在同一 execution 内继续执行 query_data / availability / profile。
+- 当 cohort 返回 UID `> 20` 且缺失 bucket `>= 2` 类时，先弹 repair 策略卡，再决定只分析已有数据、只补 behavior、补齐全部或先缩小范围。
+- 前端 chat 状态拆成 `pendingAck + pendingResolution` 两条交互通道，SQL 审批和 Agent 澄清/策略选择不再复用同一状态位。
+
+## 2026-05-29 V5 Production Hardening Pass
+
+- credit repair 正式改成 raw-first：Data Agent 补数只要求 `uid / user_uuid / valor / nombrescore / razones / consultas_detail_json / creditos_detail_json / timestamp_` 等原始 Buró 字段，不再要求直接生成画像摘要字段。
+- availability 继续兼容 legacy summary credit 数据，并为 credit bucket 增加 `source_shape` 可观测性，区分 `raw_buro / summary / mixed / prepared`。
+- `data_acquisition_agent/api.py` 去掉顶层 executor / connection 强依赖；`from data_acquisition_agent.api import router` 在缺 `pymysql` 的环境下不再直接失败。
+- `output_writer.validate_bucket_schema()` 前移 behavior / credit 最小 schema 校验，uid-only 结果不会再写入 `data/*/by_uid` 后才由 availability 报错。
+- clarification 卡升级为可编辑表单，支持 `country / time_window / auto_profile`；cohort repair strategy 触发规则收敛为 `UID >= 10`、`missing buckets >= 2`、或 `estimated repairs >= 2` 任一命中。
+- `query_data()` 单次调用现已优先返回真实 `rows_estimated`，与流式 cohort 路径口径一致。
+- `ack_bus / resolve_bus` 仍为进程内实现，但注释/契约已明确未来可替换目标 key 为 `session_id + execution_id + step_id`。
+
+## 2026-05-29 V6 Consistency & Data Quality Pass
+
+- clarification answers 中 `auto_profile=false` 现已真正生效：cohort 请求只执行 `query_data`，直接返回 UID 列表与 SQL/行数元信息，不再自动进入 availability / repair / profile。
+- review 的 weak bucket warning 收敛到 requested buckets；显式 App-only 请求不会再被 legacy credit summary fallback 误降级。
+- credit signal contract 拆成 strong raw / weak meta / summary 三层；`timestamp_ / code / apply_risk_id / folioconsulta` 不再单独让 credit bucket 通过。
+- `data_availability` 与 `data_acquisition_agent.output_writer` 现在共用同一套字段归一化与 credit signal 规则。
+- output writer 新增 uid 实际列解析与 behavior / credit 行级非空校验，避免“字段存在但关键值全空”的结果落盘。
+- Data Agent capability 改成 tri-state：`unset=auto`、`false=disabled`、`true=required`；router 挂载、query-data、repair 统一使用同一能力判定。
+
 ## 开发指导入口
 
 - 当前项目是 **Codex-first**：项目级开发规则以 `AGENTS.md` 为准。
@@ -408,3 +477,4 @@ V2 启动前必须重新走 Vibe Coding Step 2 Brainstorming + 新 Design Doc + 
 - [2026-05-02] 前端渐进加载迁移（参考项目融合）：Phase A 后端（shared_orchestrator 单例 + 模块缓存 + /api/analyze-module + /api/ui-config）+ Phase B 前端（SSE → 模块级渐进加载 + 假动画过渡 + ModuleStatusPanel + trace 独立加载）+ BehaviorPanel 中文乱码修复 + 大纲 LLM 摘要。270 passed 0 failed
 - [2026-05-25] Orchestrator Memory V1 落地：SQLite + FTS5 长期记忆、严格写入白名单、跨 session 召回、Memory Inspector 管理抽屉、软删除/归档/恢复、离线 memory eval runner。Checkpoint commit: `3c10d85`；行为契约见 `docs/specs/memory-behavior-contract.md`。
 - [2026-05-26] Orchestrator Chat progress / memory UI contract：新增 `tool_progress` 模块级进度事件、只读短期会话历史列表、长期记忆状态文案边界；契约见 `docs/specs/orchestrator-chat-progress-memory-ui-contract.md`。
+- [2026-05-29] V7 Capability Gating Follow-up：fake Data Agent 测试改成显式 capability patch；direct profile 缺 bucket 时在 planning 阶段尊重 capability，不再生成误导性的 `repair_*` step；visible execution 新增 `data_acquisition_unavailable` 步骤；credit `source_shape` 与 executor `rows_per_uid` 语义进一步收敛。

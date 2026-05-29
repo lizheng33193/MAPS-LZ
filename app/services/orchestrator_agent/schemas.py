@@ -15,6 +15,19 @@ CountryCode = Literal["th", "mx", "co", "pe", "cl", "br"]
 
 # Profile 模块（与 AnalysisOrchestrator.SUPPORTED_MODULES 对齐）
 ProfileModule = Literal["app", "behavior", "credit", "comprehensive", "product", "ops"]
+BucketName = Literal["app", "behavior", "credit"]
+KnownIntent = Literal[
+    "answer_from_workspace",
+    "profile_uid",
+    "profile_batch",
+    "need_clarification",
+    "query_data_then_profile",
+    "run_trace",
+    "general_chat",
+]
+AnswerMode = Literal["workspace_evidence_answer", "tool_execution", "general_chat"]
+PlanStepStatus = Literal["pending", "running", "awaiting_resolution", "done", "skipped", "blocked", "failed"]
+BucketStatus = Literal["available", "missing", "invalid", "unsupported"]
 
 
 # ===== Top-level chat request =====
@@ -40,6 +53,7 @@ class RunProfileInput(BaseModel):
     uids: list[str] = Field(..., min_length=1, max_length=200)
     app_time: Optional[str] = Field(None, description="ISO8601 格式 application_time；未提供时由模块走默认口径")
     modules: Optional[list[ProfileModule]] = None  # None = 默认 ["app"]
+    strict_data_mode: bool = False
 
 
 class RunProfileOutput(BaseModel):
@@ -74,6 +88,23 @@ class QueryDataOutput(BaseModel):
     rows_estimated: int = -1
 
 
+class RepairProfileDataInput(BaseModel):
+    uids: list[str] = Field(..., min_length=1, max_length=200)
+    country: str
+    bucket: BucketName
+    reason: str = Field(..., min_length=1, max_length=1000)
+
+
+class RepairProfileDataOutput(BaseModel):
+    bucket: BucketName
+    requested_uids: list[str]
+    written_uids: list[str]
+    filenames: list[str]
+    sql_text: str
+    rows_estimated: int = -1
+    rows_actual: int = 0
+
+
 class MemoryWriteInput(BaseModel):
     key: str = Field(..., pattern=r"^[a-zA-Z0-9_/.-]+$", max_length=200)
     value: str = Field(..., max_length=20000)
@@ -90,6 +121,110 @@ class MemoryReadInput(BaseModel):
 
 class MemoryReadOutput(BaseModel):
     items: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class RequestUnderstanding(BaseModel):
+    intent: KnownIntent
+    route_label: str
+    rewritten_goal: str
+    focus: list[str] = Field(default_factory=list)
+    requires_tools: bool
+    route_reason: str
+    answer_mode: AnswerMode
+    missing_slots: list[str] = Field(default_factory=list)
+    clarification_prompt: str | None = None
+    candidate_defaults: dict[str, Any] = Field(default_factory=dict)
+
+
+class NormalizedRequest(BaseModel):
+    intent: KnownIntent
+    country: str | None = None
+    uids: list[str] = Field(default_factory=list)
+    uid_file_path: str | None = None
+    modules: list[ProfileModule] = Field(default_factory=list)
+    trace_days: int = 7
+    application_time_hint: str | None = None
+    request_summary: str
+    query_request: str | None = None
+    read_only: bool = False
+    request_understanding: RequestUnderstanding | None = None
+
+
+class BucketAvailability(BaseModel):
+    status: BucketStatus
+    available: bool
+    usable_for_profile: bool = False
+    checked_sources: list[str] = Field(default_factory=list)
+    source_type: str
+    source_shape: str | None = None
+    path: str | None = None
+    detail: str | None = None
+    quality_score: float | None = None
+    weak_reasons: list[str] = Field(default_factory=list)
+    row_count: int | None = None
+
+
+class UidAvailability(BaseModel):
+    uid: str
+    app: BucketAvailability
+    behavior: BucketAvailability
+    credit: BucketAvailability
+    available_buckets: list[BucketName] = Field(default_factory=list)
+    missing_buckets: list[BucketName] = Field(default_factory=list)
+
+
+class DataAvailability(BaseModel):
+    country: str | None = None
+    checked_uids: list[str] = Field(default_factory=list)
+    per_uid: list[UidAvailability] = Field(default_factory=list)
+
+
+class PlanStep(BaseModel):
+    step_id: str
+    title: str
+    kind: str
+    status: PlanStepStatus = "pending"
+    user_visible_reason: str = ""
+    tool_name: str | None = None
+    tool_call_id: str | None = None
+    result_summary: str | None = None
+    depends_on: list[str] = Field(default_factory=list)
+    resolution_type: str | None = None
+    resolution_prompt: str | None = None
+    resolution_options: list[str] = Field(default_factory=list)
+    resolution_required_slots: list[str] = Field(default_factory=list)
+    resolution_candidate_defaults: dict[str, Any] = Field(default_factory=dict)
+
+
+class ExecutionPlan(BaseModel):
+    execution_id: str
+    request_summary: str
+    intent: KnownIntent
+    request_understanding: RequestUnderstanding | None = None
+    availability: DataAvailability | None = None
+    steps: list[PlanStep] = Field(default_factory=list)
+
+
+class ReviewResult(BaseModel):
+    status: Literal["pass", "warning", "fail"]
+    issues: list[dict[str, Any]] = Field(default_factory=list)
+    can_answer: bool
+    confidence_impact: str | None = None
+
+
+class ExecutionTraceRecord(BaseModel):
+    execution_id: str
+    prompt: str
+    request_summary: str
+    intent: KnownIntent
+    request_understanding: RequestUnderstanding | None = None
+    availability: DataAvailability | None = None
+    steps: list[PlanStep] = Field(default_factory=list)
+    review: ReviewResult | None = None
+    final_status: Literal["running", "completed", "blocked", "error"] = "running"
+    final_message: str | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
 # ===== Session 持久化 schemas =====
@@ -123,6 +258,7 @@ class OrchestratorSession(BaseModel):
     last_memory_sync_at: datetime | None = None
     messages: list[OrchestratorMessage] = Field(default_factory=list)
     tool_calls: list[ToolCallRecord] = Field(default_factory=list)
+    execution_traces: list[ExecutionTraceRecord] = Field(default_factory=list)
     total_tokens: int = 0
     final_message: str | None = None
     confidence: float | None = None

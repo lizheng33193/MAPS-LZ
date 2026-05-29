@@ -1,5 +1,6 @@
 """FastAPI application entrypoint for the user profiling multi-agent system."""
 
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -13,9 +14,11 @@ from app.api.analyze_module import router as analyze_module_router
 from app.api.analyze_stream import router as analyze_stream_router
 from app.api.trace import router as trace_router
 from app.core.config import settings
+from app.core.data_acquisition_capability import get_data_acquisition_capability
 from app.ui.build_frontend import BUILT_FRONTEND_HTML, build_frontend_html
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+LOGGER = logging.getLogger(__name__)
 
 
 # Create the FastAPI application with basic project metadata.
@@ -73,10 +76,23 @@ app.include_router(analyze_module_router, prefix="/api", tags=["analyze"])
 app.include_router(analyze_stream_router, prefix="/api", tags=["analyze"])
 app.include_router(trace_router)
 
-from data_acquisition_agent.api import router as data_acquisition_router
-app.include_router(data_acquisition_router)
-
 # Orchestrator Agent SSE chat (Plan #03)
 from app.api.orchestrator_routes import router as orchestrator_router
 
 app.include_router(orchestrator_router)
+
+
+def _maybe_include_data_acquisition_router() -> None:
+    capability = get_data_acquisition_capability()
+    if not capability.enabled:
+        if capability.reason != "disabled_by_config":
+            LOGGER.warning(
+                "Skipping /api/data-acquisition router because capability is unavailable: %s",
+                capability.reason,
+            )
+        return
+    data_api_mod = __import__("data_acquisition_agent.api", fromlist=["router"])
+    app.include_router(data_api_mod.router)
+
+
+_maybe_include_data_acquisition_router()

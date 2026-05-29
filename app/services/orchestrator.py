@@ -35,8 +35,9 @@ class AnalysisOrchestrator:
     extension point for future LangGraph migration.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, strict_data_mode: bool = False) -> None:
         """Initialize repository, model client and skill registry."""
+        self.strict_data_mode = strict_data_mode
         self.repository = self._init_repository()
         self.model_client = ModelClient()
         self.registry = self._build_registry()
@@ -135,7 +136,7 @@ class AnalysisOrchestrator:
             logger.info("Using warehouse repository.")
             return WarehouseUserRepository()
         logger.info("Using local repository.")
-        return LocalUserRepository()
+        return LocalUserRepository(allow_sample_fallback=not self.strict_data_mode)
 
     # -- Module-level analysis (progressive loading) -----------------------
 
